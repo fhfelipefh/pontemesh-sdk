@@ -1,0 +1,3 @@
+export interface FragmentDescriptor { index: number; fragmentId: string; byteRangeStart: number; byteRangeEnd: number; sizeBytes: number; hashAlgorithm: string; sha256: string; priority: string; fallbackRangeHeader: string; }
+export interface Manifest { manifestId: string; objectId: string; bucket: string; key: string; version: string; totalSizeBytes: number; contentType: string; objectHashAlgorithm: string; objectSha256: string; fragmentSizeBytes: number; fragments: FragmentDescriptor[]; availabilityState: string; createdAt: string; }
+export function parseManifest(value: unknown): Manifest { const v=value as Manifest; if(!v||typeof v.manifestId!=="string"||!Array.isArray(v.fragments)) throw new Error("MANIFEST_INVALID"); return v; }

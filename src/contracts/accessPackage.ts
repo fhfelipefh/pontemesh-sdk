@@ -1,0 +1,5 @@
+import type { Manifest } from "./manifest"; import type { AuthorizedSource, SourceSelectionContract } from "./sources"; import type { FallbackContract } from "./fallback";
+export interface CreateAccessPackageRequest { bucket: string; key: string; ttlSeconds?: number; }
+export interface AccessPackage { id: string; packageToken: string; bucket: string; key: string; version: string; manifestId: string; expiresAt: string; scope: string[]; authorizedSources: AuthorizedSource[]; sourceSelection: SourceSelectionContract; fallback: FallbackContract; manifest: Manifest; }
+export interface RevalidateAccessPackageResponse { packageId: string; bucket: string; key: string; manifestId: string; valid: boolean; authorizedSources: AuthorizedSource[]; sourceSelection: SourceSelectionContract; fallback: FallbackContract; }
+export function parseAccessPackage(value: unknown): AccessPackage { const v=value as AccessPackage; if(!v||typeof v.id!=="string"||typeof v.packageToken!=="string"||!v.manifest||!Array.isArray(v.authorizedSources)) throw new Error("ACCESS_PACKAGE_INVALID"); return v; }

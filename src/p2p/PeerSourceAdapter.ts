@@ -1,0 +1,2 @@
+import type { AuthorizedSource } from "../contracts/sources"; import type { FragmentDescriptor } from "../contracts/manifest";
+export interface PeerSourceAdapter { canHandle(source: AuthorizedSource): boolean; downloadFragment(input:{source:AuthorizedSource; fragment:FragmentDescriptor; packageToken:string; signal?:AbortSignal}): Promise<Uint8Array>; announceValidatedFragment?(input:{bucket:string; key:string; fragmentIndex:number; sha256:string}): Promise<void>; }

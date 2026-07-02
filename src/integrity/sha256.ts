@@ -1,0 +1,1 @@
+export async function sha256(bytes: Uint8Array): Promise<string> { const c=globalThis.crypto; if(c?.subtle){ const digest=await c.subtle.digest("SHA-256", bytes.slice().buffer); return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,"0")).join(""); } const { createHash } = await import("node:crypto"); return createHash("sha256").update(bytes).digest("hex"); }
