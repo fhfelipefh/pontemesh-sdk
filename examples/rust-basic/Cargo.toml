@@ -1,0 +1,8 @@
+[package]
+name = "pontemesh-rust-basic"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pontemesh-sdk-core = { path = "../../crates/pontemesh-sdk-core" }
+

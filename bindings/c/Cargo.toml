@@ -1,0 +1,13 @@
+[package]
+name = "pontemesh-sdk-c"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "pontemesh_sdk"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+pontemesh-sdk-core = { path = "../../crates/pontemesh-sdk-core" }
+
