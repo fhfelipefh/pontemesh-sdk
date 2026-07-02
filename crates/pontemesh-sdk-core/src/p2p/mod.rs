@@ -12,10 +12,13 @@ pub mod peer_server;
 pub mod peer_transport;
 
 pub use disabled_peer_adapter::DisabledPeerTransport;
+pub use libp2p_transport::{
+    Libp2pFragmentRequest, Libp2pFragmentResponse, Libp2pTransport, FRAGMENT_PROTOCOL,
+};
 pub use peer_announcement::PeerAnnouncement;
 pub use peer_client::{CircuitState, PeerClient};
 pub use peer_identity::PeerIdentity;
 pub use peer_policy::PeerPolicy;
 pub use peer_protocol::{FragmentRequest, FragmentResponse, PeerProtocolError};
 pub use peer_server::PeerServer;
-pub use peer_transport::{P2pConfig, PeerTransport};
+pub use peer_transport::{P2pConfig, P2pTransportKind, PeerTransport};

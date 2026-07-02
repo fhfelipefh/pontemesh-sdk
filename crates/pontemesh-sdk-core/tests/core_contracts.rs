@@ -13,7 +13,8 @@ use pontemesh_sdk_core::download::{
 use pontemesh_sdk_core::errors::PontemeshError;
 use pontemesh_sdk_core::integrity::{sha256_hex, validate_fragment};
 use pontemesh_sdk_core::p2p::{
-    CircuitState, DisabledPeerTransport, P2pConfig, PeerClient, PeerServer, PeerTransport,
+    CircuitState, DisabledPeerTransport, P2pConfig, P2pTransportKind, PeerClient, PeerServer,
+    PeerTransport,
 };
 use pontemesh_sdk_core::storage::{MemoryStorage, StorageAdapter};
 
@@ -363,6 +364,9 @@ fn p2p_required_returns_startup_error_instead_of_silent_disable() {
             p2p: P2pConfig {
                 enabled: true,
                 required: true,
+                transport: P2pTransportKind::ExperimentalTcp,
+                listen_addrs: Vec::new(),
+                announce_addrs: Vec::new(),
                 listen_addr: Some("127.0.0.1:1:not-a-socket".to_string()),
                 announce_addr: None,
             },

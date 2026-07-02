@@ -17,7 +17,10 @@ pub struct HttpSourceClient {
 impl HttpSourceClient {
     pub fn new() -> Self {
         Self {
-            http: reqwest::blocking::Client::new(),
+            http: reqwest::blocking::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("build HTTP client"),
         }
     }
 }

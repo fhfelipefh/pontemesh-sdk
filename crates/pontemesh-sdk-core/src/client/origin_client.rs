@@ -62,7 +62,10 @@ impl HttpOriginClient {
         Self {
             origin_url: config.origin_url.trim_end_matches('/').to_string(),
             application_token: config.application_token,
-            http: reqwest::blocking::Client::new(),
+            http: reqwest::blocking::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("build HTTP client"),
         }
     }
 
