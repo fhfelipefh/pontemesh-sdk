@@ -49,6 +49,11 @@ PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_sync_object(
     const char* destination
 );
 
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_enable_p2p(
+    PontemeshClient* client,
+    const char* listen_addr
+);
+
 PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_sync_object_with_progress(
     PontemeshClient* client,
     const char* bucket,
@@ -71,4 +76,3 @@ PONTEMESH_SDK_EXPORT void pontemesh_client_free(PontemeshClient* client);
 #endif
 
 #endif
-

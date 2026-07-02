@@ -6,6 +6,9 @@ pub mod range_request;
 pub mod source_selector;
 pub mod sync_object;
 
-pub use progress_map::ProgressMap;
+pub use progress_map::{FragmentProgressState, ProgressMap};
 pub use source_selector::SourceSelector;
-pub use sync_object::{order_sources_for_test, sync_object, ProgressCallback, SyncObjectRequest};
+pub use sync_object::{
+    order_sources_for_test, sync_object, sync_object_with_summary, ProgressCallback,
+    SyncObjectRequest, SyncObjectResult, TransferSummary,
+};

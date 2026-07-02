@@ -4,7 +4,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::ptr;
 
-use pontemesh_sdk_core::{ErrorCode, PontemeshClientConfig, SyncObjectRequest};
+use pontemesh_sdk_core::{p2p::P2pConfig, ErrorCode, PontemeshClientConfig, SyncObjectRequest};
 
 pub struct PontemeshClient {
     inner: pontemesh_sdk_core::PontemeshClient,
@@ -66,11 +66,44 @@ pub unsafe extern "C" fn pontemesh_client_create(
             inner: pontemesh_sdk_core::PontemeshClient::new(PontemeshClientConfig {
                 origin_url,
                 application_token,
+                p2p: P2pConfig::default(),
             }),
             last_error: None,
         };
         *out_client = Box::into_raw(Box::new(client));
         PontemeshStatus::PontemeshOk
+    })
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+/// `listen_addr` may be null; when provided it must be a valid null-terminated UTF-8 C string.
+pub unsafe extern "C" fn pontemesh_client_enable_p2p(
+    client: *mut PontemeshClient,
+    listen_addr: *const c_char,
+) -> PontemeshStatus {
+    ffi_boundary(|| {
+        let client = match client.as_mut() {
+            Some(client) => client,
+            None => return PontemeshStatus::PontemeshInvalidArgument,
+        };
+        let listen_addr = if listen_addr.is_null() {
+            None
+        } else {
+            match read_string(listen_addr) {
+                Ok(value) => Some(value),
+                Err(status) => return set_error(client, "listen_addr is invalid", status),
+            }
+        };
+        match client.inner.enable_p2p(listen_addr.as_deref()) {
+            Ok(()) => {
+                client.last_error = None;
+                PontemeshStatus::PontemeshOk
+            }
+            Err(error) => set_error(client, &error.to_string(), status_from_code(error.code())),
+        }
     })
 }
 

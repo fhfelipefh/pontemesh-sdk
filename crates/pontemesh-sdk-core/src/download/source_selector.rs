@@ -1,4 +1,6 @@
-use crate::contracts::{AuthorizedSource, FragmentDescriptor, SourceSelectionContract, SourceType};
+use crate::contracts::{
+    is_expired_utc, AuthorizedSource, FragmentDescriptor, SourceSelectionContract, SourceType,
+};
 use crate::p2p::PeerTransport;
 
 pub struct SourceSelector<'a> {
@@ -47,6 +49,9 @@ impl<'a> SourceSelector<'a> {
         fragment_index: usize,
     ) -> bool {
         if source.source_type != source_type {
+            return false;
+        }
+        if is_expired_utc(&source.expires_at) {
             return false;
         }
         if !source

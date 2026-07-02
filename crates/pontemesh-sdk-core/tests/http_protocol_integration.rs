@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use pontemesh_sdk_core::contracts::*;
 use pontemesh_sdk_core::integrity::sha256_hex;
-use pontemesh_sdk_core::{PontemeshClient, PontemeshClientConfig, SyncObjectRequest};
+use pontemesh_sdk_core::{
+    p2p::P2pConfig, PontemeshClient, PontemeshClientConfig, SyncObjectRequest,
+};
 
 #[derive(Debug, Clone)]
 struct LoggedRequest {
@@ -91,6 +93,7 @@ fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
     let client = PontemeshClient::new(PontemeshClientConfig {
         origin_url: server.origin_url(),
         application_token: "application-token".to_string(),
+        p2p: P2pConfig::default(),
     });
     let mut progress = Vec::new();
 
@@ -168,6 +171,7 @@ fn sdk_falls_back_from_replica_to_origin_and_records_source_failure() {
     let client = PontemeshClient::new(PontemeshClientConfig {
         origin_url: server.origin_url(),
         application_token: "application-token".to_string(),
+        p2p: P2pConfig::default(),
     });
     let mut progress_sources = Vec::new();
 
@@ -336,6 +340,8 @@ fn access_package_json(addr: SocketAddr) -> String {
             endpoint: format!(
                 "http://{addr}/pontemesh/replica/access-packages/pkg-1/objects/game-assets/maps%2Fdesert-v3.pak"
             ),
+            peer_id: None,
+            transport: None,
             priority: 1,
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             available_fragments: vec![0, 1],
@@ -346,6 +352,8 @@ fn access_package_json(addr: SocketAddr) -> String {
             endpoint: format!(
                 "http://{addr}/pontemesh/access-packages/pkg-1/objects/game-assets/maps%2Fdesert-v3.pak"
             ),
+            peer_id: None,
+            transport: None,
             priority: 2,
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             available_fragments: vec![0, 1],

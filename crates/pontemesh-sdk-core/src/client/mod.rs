@@ -8,7 +8,7 @@ use std::fs;
 
 use crate::download::{sync_object, ProgressCallback, SyncObjectRequest};
 use crate::errors::PontemeshError;
-use crate::p2p::{DisabledPeerTransport, PeerTransport};
+use crate::p2p::{DisabledPeerTransport, PeerClient, PeerTransport};
 use crate::storage::MemoryStorage;
 
 pub struct PontemeshClient {
@@ -19,10 +19,21 @@ pub struct PontemeshClient {
 
 impl PontemeshClient {
     pub fn new(config: PontemeshClientConfig) -> Self {
+        let peer: Box<dyn PeerTransport> = if config.p2p.enabled {
+            match PeerClient::start(
+                config.p2p.listen_addr.as_deref(),
+                config.p2p.announce_addr.as_deref(),
+            ) {
+                Ok(peer) => Box::new(peer),
+                Err(_) => Box::new(DisabledPeerTransport),
+            }
+        } else {
+            Box::new(DisabledPeerTransport)
+        };
         Self {
             origin: Box::new(HttpOriginClient::new(config)),
             source: Box::new(HttpSourceClient::new()),
-            peer: Box::new(DisabledPeerTransport),
+            peer,
         }
     }
 
@@ -36,6 +47,11 @@ impl PontemeshClient {
             source,
             peer,
         }
+    }
+
+    pub fn enable_p2p(&mut self, listen_addr: Option<&str>) -> Result<(), PontemeshError> {
+        self.peer = Box::new(PeerClient::start(listen_addr, None)?);
+        Ok(())
     }
 
     pub fn sync_object(&self, request: SyncObjectRequest) -> Result<(), PontemeshError> {

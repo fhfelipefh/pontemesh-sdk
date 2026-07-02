@@ -2,11 +2,23 @@ use serde_json::json;
 
 use crate::contracts::{AccessPackage, CreateAccessPackageRequest, Manifest};
 use crate::errors::PontemeshError;
+use crate::p2p::PeerAnnouncement;
 
 #[derive(Debug, Clone)]
 pub struct PontemeshClientConfig {
     pub origin_url: String,
     pub application_token: String,
+    pub p2p: crate::p2p::P2pConfig,
+}
+
+impl PontemeshClientConfig {
+    pub fn new(origin_url: String, application_token: String) -> Self {
+        Self {
+            origin_url,
+            application_token,
+            p2p: crate::p2p::P2pConfig::default(),
+        }
+    }
 }
 
 pub trait OriginClient: Send + Sync {
@@ -24,6 +36,15 @@ pub trait OriginClient: Send + Sync {
         _event_type: &str,
         _fragment_index: Option<usize>,
         _source_type: Option<&str>,
+    ) -> Result<(), PontemeshError> {
+        Ok(())
+    }
+
+    fn announce_peer_availability(
+        &self,
+        _package: &AccessPackage,
+        _endpoint: &str,
+        _available_fragments: &[usize],
     ) -> Result<(), PontemeshError> {
         Ok(())
     }
@@ -123,6 +144,35 @@ impl OriginClient for HttpOriginClient {
                 "fragmentIndex": fragment_index,
                 "sourceType": source_type,
             }))
+            .send()
+            .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(PontemeshError::OriginRequestFailed(
+                response.status().to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn announce_peer_availability(
+        &self,
+        package: &AccessPackage,
+        endpoint: &str,
+        available_fragments: &[usize],
+    ) -> Result<(), PontemeshError> {
+        let package_id = urlencoding::encode(&package.id);
+        let bucket = urlencoding::encode(&package.bucket);
+        let key = urlencoding::encode(&package.key);
+        let response = self
+            .http
+            .post(self.url(&format!(
+                "/pontemesh/access-packages/{package_id}/peers/{bucket}/{key}"
+            )))
+            .bearer_auth(&package.package_token)
+            .json(&PeerAnnouncement {
+                endpoint: endpoint.to_string(),
+                available_fragments: available_fragments.to_vec(),
+            })
             .send()
             .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
         if !response.status().is_success() {

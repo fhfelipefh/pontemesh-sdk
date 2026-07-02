@@ -1,4 +1,4 @@
-use crate::contracts::{AuthorizedSource, FragmentDescriptor, SourceType};
+use crate::contracts::{AccessPackage, AuthorizedSource, FragmentDescriptor, Manifest, SourceType};
 use crate::errors::PontemeshError;
 
 use super::PeerTransport;
@@ -13,8 +13,9 @@ impl PeerTransport for DisabledPeerTransport {
     fn download_fragment(
         &self,
         _source: &AuthorizedSource,
+        _package: &AccessPackage,
+        _manifest: &Manifest,
         _fragment: &FragmentDescriptor,
-        _package_token: &str,
     ) -> Result<Vec<u8>, PontemeshError> {
         Err(PontemeshError::PeerTransportNotEnabled)
     }
