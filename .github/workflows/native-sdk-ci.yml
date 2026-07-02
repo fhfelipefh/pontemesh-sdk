@@ -1,8 +1,6 @@
 name: Native SDK CI
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -55,4 +53,3 @@ jobs:
             target/release/libpontemesh_sdk.dylib
             target/release/libpontemesh_sdk.a
           if-no-files-found: ignore
-
