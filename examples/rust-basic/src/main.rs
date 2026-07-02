@@ -7,7 +7,7 @@ fn main() -> Result<(), pontemesh_sdk_core::PontemeshError> {
         origin_url: "https://origin.example.com".to_string(),
         application_token: "application-token".to_string(),
         p2p: P2pConfig::default(),
-    });
+    })?;
 
     client.sync_object(SyncObjectRequest {
         bucket: "game-assets".to_string(),

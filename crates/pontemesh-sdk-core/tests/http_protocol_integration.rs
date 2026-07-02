@@ -94,7 +94,8 @@ fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
         origin_url: server.origin_url(),
         application_token: "application-token".to_string(),
         p2p: P2pConfig::default(),
-    });
+    })
+    .expect("create SDK client");
     let mut progress = Vec::new();
 
     client
@@ -172,7 +173,8 @@ fn sdk_falls_back_from_replica_to_origin_and_records_source_failure() {
         origin_url: server.origin_url(),
         application_token: "application-token".to_string(),
         p2p: P2pConfig::default(),
-    });
+    })
+    .expect("create SDK client");
     let mut progress_sources = Vec::new();
 
     client
@@ -242,6 +244,10 @@ fn handle_connection(mut stream: TcpStream, addr: SocketAddr, state: &Arc<TestSt
             .target
             .starts_with("/pontemesh/access-packages/pkg-1/events/")
     {
+        if header(&request, "authorization") != Some("Bearer package-token-secret") {
+            write_text(&mut stream, 401, "events require package token");
+            return;
+        }
         write_json(&mut stream, 202, r#"{"accepted":true}"#);
         return;
     }
@@ -370,13 +376,21 @@ fn access_package_json(addr: SocketAddr) -> String {
         scope: vec!["object:read".to_string()],
         authorized_sources: sources,
         source_selection: SourceSelectionContract {
+            strategy: "PEER_REPLICA_ORIGIN".to_string(),
+            fragment_priority: "MANIFEST_ORDER".to_string(),
+            failure_threshold: 2,
             allow_peer_sharing: true,
             allow_replica_edge: true,
-            failure_threshold: 2,
         },
         fallback: FallbackContract {
-            enabled: true,
+            source_type: "ORIGIN".to_string(),
+            object_endpoint: format!(
+                "http://{addr}/pontemesh/access-packages/pkg-1/objects/game-assets/maps%2Fdesert-v3.pak"
+            ),
+            supports_range: true,
             preserve_validated_fragments: true,
+            mode: "RANGE".to_string(),
+            revalidate_endpoint: None,
         },
         manifest,
     })

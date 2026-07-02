@@ -18,23 +18,29 @@ pub struct PontemeshClient {
 }
 
 impl PontemeshClient {
-    pub fn new(config: PontemeshClientConfig) -> Self {
+    pub fn new(config: PontemeshClientConfig) -> Result<Self, PontemeshError> {
         let peer: Box<dyn PeerTransport> = if config.p2p.enabled {
             match PeerClient::start(
                 config.p2p.listen_addr.as_deref(),
                 config.p2p.announce_addr.as_deref(),
             ) {
                 Ok(peer) => Box::new(peer),
-                Err(_) => Box::new(DisabledPeerTransport),
+                Err(error) if config.p2p.required => return Err(error),
+                Err(error) => {
+                    eprintln!(
+                        "pontemesh-sdk: P2P transport disabled after startup failure: {error}"
+                    );
+                    Box::new(DisabledPeerTransport)
+                }
             }
         } else {
             Box::new(DisabledPeerTransport)
         };
-        Self {
+        Ok(Self {
             origin: Box::new(HttpOriginClient::new(config)),
             source: Box::new(HttpSourceClient::new()),
             peer,
-        }
+        })
     }
 
     pub fn with_clients(

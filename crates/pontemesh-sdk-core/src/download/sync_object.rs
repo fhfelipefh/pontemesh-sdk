@@ -68,6 +68,7 @@ pub fn sync_object_with_summary(
     let package = origin.create_access_package(&request.bucket, &request.key)?;
     origin.record_event(
         &package.id,
+        &package.package_token,
         &request.bucket,
         &request.key,
         "ACCESS_PACKAGE_CREATED",
@@ -121,6 +122,7 @@ pub fn sync_object_with_summary(
                     }
                     origin.record_event(
                         &package.id,
+                        &package.package_token,
                         &request.bucket,
                         &request.key,
                         "FRAGMENT_VALIDATED",
@@ -145,6 +147,7 @@ pub fn sync_object_with_summary(
                     record_summary_failure(&mut summary, source.source_type, &error);
                     let _ = origin.record_event(
                         &package.id,
+                        &package.package_token,
                         &request.bucket,
                         &request.key,
                         "SOURCE_FAILED",
@@ -170,6 +173,7 @@ pub fn sync_object_with_summary(
     }
     origin.record_event(
         &package.id,
+        &package.package_token,
         &request.bucket,
         &request.key,
         "OBJECT_SYNCED",

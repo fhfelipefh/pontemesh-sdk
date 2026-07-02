@@ -2,6 +2,11 @@
 
 The current protocol is `experimental-tcp` v1: newline-delimited JSON over TCP with base64 fragment bytes. It is acceptable for local SDK mesh simulation and transport contract validation, but less efficient than binary framing and not the final secure transport.
 
+```text
+P2P funcional local: pronto
+P2P seguro de produção: parcial
+```
+
 Endpoints use:
 
 ```text

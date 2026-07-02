@@ -8,6 +8,13 @@ The current SDK transport is `experimental-tcp`: native Rust TCP with strict fra
 
 It is not marked as the final secure transport because it does not yet provide a libp2p Noise/TLS authenticated encrypted channel. The production target remains libp2p with a stable `PeerId`, identity key, secure channel, request-response protocol, timeouts, backpressure, and rate limits.
 
+Current readiness:
+
+```text
+P2P funcional local: pronto
+P2P seguro de produção: parcial
+```
+
 ## Threat Model
 
 | Threat | Mitigation |

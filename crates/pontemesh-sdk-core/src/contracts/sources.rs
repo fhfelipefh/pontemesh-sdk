@@ -26,9 +26,16 @@ pub struct AuthorizedSource {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceSelectionContract {
+    #[serde(default = "default_strategy")]
+    pub strategy: String,
+    #[serde(default = "default_fragment_priority")]
+    pub fragment_priority: String,
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: i64,
+    #[serde(default = "default_true")]
     pub allow_peer_sharing: bool,
+    #[serde(default = "default_true")]
     pub allow_replica_edge: bool,
-    pub failure_threshold: u32,
 }
 
 pub fn is_expired_utc(expires_at: &str) -> bool {
@@ -74,9 +81,27 @@ fn parse_utc_seconds(value: &str) -> Option<i64> {
 impl Default for SourceSelectionContract {
     fn default() -> Self {
         Self {
+            strategy: default_strategy(),
+            fragment_priority: default_fragment_priority(),
+            failure_threshold: default_failure_threshold(),
             allow_peer_sharing: true,
             allow_replica_edge: true,
-            failure_threshold: 2,
         }
     }
+}
+
+fn default_strategy() -> String {
+    "PEER_REPLICA_ORIGIN".to_string()
+}
+
+fn default_fragment_priority() -> String {
+    "MANIFEST_ORDER".to_string()
+}
+
+fn default_failure_threshold() -> i64 {
+    2
+}
+
+fn default_true() -> bool {
+    true
 }

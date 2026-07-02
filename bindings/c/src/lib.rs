@@ -62,12 +62,16 @@ pub unsafe extern "C" fn pontemesh_client_create(
         if origin_url.trim().is_empty() || application_token.trim().is_empty() {
             return PontemeshStatus::PontemeshInvalidArgument;
         }
+        let inner = match pontemesh_sdk_core::PontemeshClient::new(PontemeshClientConfig {
+            origin_url,
+            application_token,
+            p2p: P2pConfig::default(),
+        }) {
+            Ok(client) => client,
+            Err(error) => return status_from_code(error.code()),
+        };
         let client = PontemeshClient {
-            inner: pontemesh_sdk_core::PontemeshClient::new(PontemeshClientConfig {
-                origin_url,
-                application_token,
-                p2p: P2pConfig::default(),
-            }),
+            inner,
             last_error: None,
         };
         *out_client = Box::into_raw(Box::new(client));

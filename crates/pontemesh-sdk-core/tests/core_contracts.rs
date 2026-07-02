@@ -355,6 +355,24 @@ fn package_token_is_not_placed_in_pontemesh_urls() {
 }
 
 #[test]
+fn p2p_required_returns_startup_error_instead_of_silent_disable() {
+    let result = pontemesh_sdk_core::PontemeshClient::new(
+        pontemesh_sdk_core::client::PontemeshClientConfig {
+            origin_url: "https://origin.example.com".to_string(),
+            application_token: "application-token".to_string(),
+            p2p: P2pConfig {
+                enabled: true,
+                required: true,
+                listen_addr: Some("127.0.0.1:1:not-a-socket".to_string()),
+                announce_addr: None,
+            },
+        },
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn peer_transport_starts_serves_and_stops() {
     let bytes = b"peer-fragment";
     let package = package(bytes, vec![]);

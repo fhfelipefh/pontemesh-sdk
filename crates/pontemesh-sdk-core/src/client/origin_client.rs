@@ -31,6 +31,7 @@ pub trait OriginClient: Send + Sync {
     fn record_event(
         &self,
         _package_id: &str,
+        _package_token: &str,
         _bucket: &str,
         _key: &str,
         _event_type: &str,
@@ -124,6 +125,7 @@ impl OriginClient for HttpOriginClient {
     fn record_event(
         &self,
         package_id: &str,
+        package_token: &str,
         bucket: &str,
         key: &str,
         event_type: &str,
@@ -138,7 +140,7 @@ impl OriginClient for HttpOriginClient {
             .post(self.url(&format!(
                 "/pontemesh/access-packages/{package_id}/events/{bucket}/{key}"
             )))
-            .bearer_auth(&self.application_token)
+            .bearer_auth(package_token)
             .json(&json!({
                 "eventType": event_type,
                 "fragmentIndex": fragment_index,
