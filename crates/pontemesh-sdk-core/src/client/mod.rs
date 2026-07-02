@@ -8,7 +8,9 @@ use std::fs;
 
 use crate::download::{sync_object, ProgressCallback, SyncObjectRequest};
 use crate::errors::PontemeshError;
-use crate::p2p::{DisabledPeerTransport, PeerClient, PeerTransport};
+use crate::p2p::{
+    DisabledPeerTransport, Libp2pTransport, P2pTransportKind, PeerClient, PeerTransport,
+};
 use crate::storage::MemoryStorage;
 
 pub struct PontemeshClient {
@@ -20,11 +22,21 @@ pub struct PontemeshClient {
 impl PontemeshClient {
     pub fn new(config: PontemeshClientConfig) -> Result<Self, PontemeshError> {
         let peer: Box<dyn PeerTransport> = if config.p2p.enabled {
-            match PeerClient::start(
-                config.p2p.listen_addr.as_deref(),
-                config.p2p.announce_addr.as_deref(),
-            ) {
-                Ok(peer) => Box::new(peer),
+            let started: Result<Box<dyn PeerTransport>, PontemeshError> = match config.p2p.transport
+            {
+                P2pTransportKind::Libp2p => {
+                    Libp2pTransport::start(&config.p2p.listen_addrs, &config.p2p.announce_addrs)
+                        .map(|peer| Box::new(peer) as Box<dyn PeerTransport>)
+                }
+                P2pTransportKind::ExperimentalTcp => PeerClient::start(
+                    config.p2p.listen_addr.as_deref(),
+                    config.p2p.announce_addr.as_deref(),
+                )
+                .map(|peer| Box::new(peer) as Box<dyn PeerTransport>),
+                P2pTransportKind::Disabled => Err(PontemeshError::PeerTransportNotEnabled),
+            };
+            match started {
+                Ok(peer) => peer,
                 Err(error) if config.p2p.required => return Err(error),
                 Err(error) => {
                     eprintln!(
@@ -33,6 +45,8 @@ impl PontemeshClient {
                     Box::new(DisabledPeerTransport)
                 }
             }
+        } else if config.p2p.required {
+            return Err(PontemeshError::PeerTransportNotEnabled);
         } else {
             Box::new(DisabledPeerTransport)
         };

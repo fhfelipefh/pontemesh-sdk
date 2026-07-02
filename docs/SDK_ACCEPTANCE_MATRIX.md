@@ -33,7 +33,7 @@
 | P2P traffic reduction test exists | Done |
 | PeerId validation exists for current contract shape | Done |
 | Frame limit, timeout, and circuit breaker exist | Done |
-| P2P secure encrypted channel | Partial: requires libp2p Noise/TLS |
+| P2P secure encrypted channel | Done: Libp2pTransport uses libp2p PeerId identity, Noise secure channel configuration, Yamux multiplexing, authorized PeerId validation, and libp2p integration tests. |
 | NAT traversal, DHT, relay, WebRTC | Future |
 | S3/MCP/admin are forbidden in core tests | Done |
 
