@@ -8,9 +8,7 @@ use std::fs;
 
 use crate::download::{sync_object, ProgressCallback, SyncObjectRequest};
 use crate::errors::PontemeshError;
-use crate::p2p::{
-    DisabledPeerTransport, Libp2pTransport, P2pTransportKind, PeerClient, PeerTransport,
-};
+use crate::p2p::{DisabledPeerTransport, Libp2pTransport, P2pTransportKind, PeerTransport};
 use crate::storage::MemoryStorage;
 
 pub struct PontemeshClient {
@@ -28,11 +26,7 @@ impl PontemeshClient {
                     Libp2pTransport::start(&config.p2p.listen_addrs, &config.p2p.announce_addrs)
                         .map(|peer| Box::new(peer) as Box<dyn PeerTransport>)
                 }
-                P2pTransportKind::ExperimentalTcp => PeerClient::start(
-                    config.p2p.listen_addr.as_deref(),
-                    config.p2p.announce_addr.as_deref(),
-                )
-                .map(|peer| Box::new(peer) as Box<dyn PeerTransport>),
+                P2pTransportKind::ExperimentalTcp => Err(PontemeshError::PeerTransportNotEnabled),
                 P2pTransportKind::Disabled => Err(PontemeshError::PeerTransportNotEnabled),
             };
             match started {
@@ -70,7 +64,10 @@ impl PontemeshClient {
     }
 
     pub fn enable_p2p(&mut self, listen_addr: Option<&str>) -> Result<(), PontemeshError> {
-        self.peer = Box::new(PeerClient::start(listen_addr, None)?);
+        let listen_addrs = listen_addr
+            .map(|addr| vec![addr.to_string()])
+            .unwrap_or_else(|| vec!["/ip4/127.0.0.1/tcp/0".to_string()]);
+        self.peer = Box::new(Libp2pTransport::start(&listen_addrs, &[])?);
         Ok(())
     }
 
