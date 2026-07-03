@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use pontemesh_sdk_core::contracts::{FragmentDescriptor, Manifest};
 use pontemesh_sdk_core::integrity::sha256_hex;
 
@@ -5,7 +7,7 @@ const SEED: &[u8] = b"pontemesh-benchmark-seed";
 
 #[derive(Debug, Clone)]
 pub struct BenchmarkObject {
-    pub bytes: Vec<u8>,
+    pub bytes: Arc<[u8]>,
     pub manifest: Manifest,
 }
 
@@ -21,7 +23,10 @@ pub fn build_object(size: u64, fragment_size: usize) -> BenchmarkObject {
     }
     bytes.truncate(size as usize);
     let manifest = manifest(&bytes, fragment_size);
-    BenchmarkObject { bytes, manifest }
+    BenchmarkObject {
+        bytes: Arc::<[u8]>::from(bytes),
+        manifest,
+    }
 }
 
 fn manifest(bytes: &[u8], fragment_size: usize) -> Manifest {

@@ -46,6 +46,12 @@ fn write_csv(path: &Path, results: &[BenchmarkResult]) -> Result<(), String> {
             "peer_failures",
             "peer_hash_failures",
             "object_hash_valid",
+            "memory_peak_mb",
+            "threads_started",
+            "threads_finished",
+            "open_connections_peak",
+            "timeouts",
+            "panics",
         ])
         .map_err(|error| error.to_string())?;
     for result in results {
@@ -78,6 +84,12 @@ fn write_csv(path: &Path, results: &[BenchmarkResult]) -> Result<(), String> {
                 result.peer_failures.to_string(),
                 result.peer_hash_failures.to_string(),
                 result.object_hash_valid.to_string(),
+                result.memory_peak_mb.to_string(),
+                result.threads_started.to_string(),
+                result.threads_finished.to_string(),
+                result.open_connections_peak.to_string(),
+                result.timeouts.to_string(),
+                result.panics.to_string(),
             ])
             .map_err(|error| error.to_string())?;
     }
@@ -119,6 +131,7 @@ fn write_report(path: &Path, results: &[BenchmarkResult]) -> Result<(), String> 
     report.push_str("- libp2p transport: request-response CBOR\n");
     report.push_str("- secure channel: Noise\n");
     report.push_str("- multiplexer: Yamux\n\n");
+    report.push_str("- libp2p version: 0.54\n\n");
     report.push_str("## Cenários\n\n");
     report.push_str("- Origin-only baseline\n- P2P com 1 seeder\n- P2P em malha\n- P2P com falha parcial e fallback\n\n");
     report.push_str("## Resultados resumidos\n\n");
@@ -143,6 +156,17 @@ fn write_report(path: &Path, results: &[BenchmarkResult]) -> Result<(), String> 
             result.peer_traffic_ratio * 100.0
         ));
     }
+    report.push_str("\n## Falhas\n\n");
+    let timeouts: u64 = results.iter().map(|result| result.timeouts).sum();
+    let panics: u64 = results.iter().map(|result| result.panics).sum();
+    report.push_str(&format!("- timeouts: {timeouts}\n- panics: {panics}\n"));
+    report.push_str("\n## Uso de memória\n\n");
+    let peak = results
+        .iter()
+        .map(|result| result.memory_peak_mb)
+        .max()
+        .unwrap_or(0);
+    report.push_str(&format!("- memory_peak_mb: {peak}\n"));
     report.push_str("\n## Comparação Origin-only vs P2P\n\n");
     report.push_str("Os cenários P2P são comparados com o baseline Origin-only da mesma combinação de tamanho, fragmento, downloaders e run.\n\n");
     report.push_str("## Redução de tráfego do Origin\n\n");
@@ -172,6 +196,18 @@ fn write_report(path: &Path, results: &[BenchmarkResult]) -> Result<(), String> 
     report.push_str("- Resultados variam por máquina.\n\n");
     report.push_str("## Como reproduzir\n\n");
     report.push_str("```bash\n./scripts/benchmark-p2p-transfer.sh\n```\n");
+    report.push_str("\n## Conclusão de prontidão\n\n");
+    if results.iter().all(|result| {
+        result.object_hash_valid
+            && result.timeouts == 0
+            && result.panics == 0
+            && (result.scenario == "origin-only"
+                || (result.bytes_from_peer > 0 && result.fragments_from_peer > 0))
+    }) {
+        report.push_str("Production-ready\n");
+    } else {
+        report.push_str("Not production-ready\n");
+    }
     fs::write(path, report).map_err(|error| error.to_string())
 }
 

@@ -32,9 +32,16 @@ pub struct BenchmarkResult {
     pub peer_failures: u64,
     pub peer_hash_failures: u64,
     pub object_hash_valid: bool,
-    pub approx_memory_bytes: u64,
+    pub memory_peak_mb: u64,
+    pub threads_started: u64,
+    pub threads_finished: u64,
+    pub open_connections_peak: u64,
+    pub timeouts: u64,
+    pub panics: u64,
     pub distinct_peer_sources_served: usize,
     pub downloaders_with_peer_bytes: usize,
+    pub fairness_min_downloader_ms: u128,
+    pub fairness_max_downloader_ms: u128,
 }
 
 #[derive(Debug, Default)]

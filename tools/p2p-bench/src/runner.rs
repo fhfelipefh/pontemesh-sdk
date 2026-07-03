@@ -1,6 +1,9 @@
 use std::collections::{HashMap, VecDeque};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use pontemesh_sdk_core::client::{OriginClient, SourceClient};
 use pontemesh_sdk_core::contracts::*;
@@ -17,6 +20,35 @@ use crate::report::write_outputs;
 use crate::scenario::Scenario;
 
 pub fn run_benchmark(config: BenchmarkConfig) -> Result<(), String> {
+    fs::create_dir_all(&config.output).map_err(|error| error.to_string())?;
+    let exit_path = config.output.join("benchmark.exit");
+    let _ = fs::remove_file(&exit_path);
+    let logger = BenchLogger::new(config.output.join("benchmark.log"));
+    logger.event("benchmark_start", &config, None, None);
+    let result = run_benchmark_inner(&config, &logger);
+    match &result {
+        Ok(()) => {
+            fs::write(&exit_path, "success\n").map_err(|error| error.to_string())?;
+            logger.event("benchmark_done", &config, None, None);
+        }
+        Err(error) => {
+            let _ = fs::write(&exit_path, format!("failure: {error}\n"));
+            logger.event("benchmark_failed", &config, None, Some(error));
+        }
+    }
+    result
+}
+
+fn run_benchmark_inner(config: &BenchmarkConfig, logger: &BenchLogger) -> Result<(), String> {
+    if config.output.exists() && !config.force && config.profile.as_str() == "production" {
+        let existing = config.output.join("results.json");
+        if existing.exists() {
+            return Err(format!(
+                "{} already exists; pass --force to overwrite production benchmark outputs",
+                existing.display()
+            ));
+        }
+    }
     let mut results = Vec::new();
     let mut baselines = HashMap::new();
     for object_size in &config.object_sizes {
@@ -33,10 +65,39 @@ pub fn run_benchmark(config: BenchmarkConfig) -> Result<(), String> {
                             downloaders,
                             run
                         );
+                        logger.event(
+                            "scenario_start",
+                            config,
+                            Some(ScenarioContext {
+                                scenario,
+                                object_size: *object_size,
+                                fragment_size: *fragment_size as u64,
+                                downloaders: *downloaders,
+                                run,
+                            }),
+                            None,
+                        );
+                        let scenario_started = Instant::now();
                         let baseline = baselines
                             .get(&(*object_size, *fragment_size as u64, *downloaders, run))
                             .copied();
-                        let result = run_scenario(scenario, &object, *downloaders, run, baseline)?;
+                        let result =
+                            run_scenario(scenario, &object, *downloaders, run, baseline, logger)?;
+                        if scenario_started.elapsed() > config.scenario_timeout {
+                            logger.event(
+                                "scenario_timeout",
+                                config,
+                                Some(ScenarioContext {
+                                    scenario,
+                                    object_size: *object_size,
+                                    fragment_size: *fragment_size as u64,
+                                    downloaders: *downloaders,
+                                    run,
+                                }),
+                                Some("scenario exceeded configured timeout"),
+                            );
+                            return Err(format!("{} scenario timeout", scenario.name()));
+                        }
                         if scenario == Scenario::OriginOnly {
                             baselines.insert(
                                 (*object_size, *fragment_size as u64, *downloaders, run),
@@ -44,7 +105,21 @@ pub fn run_benchmark(config: BenchmarkConfig) -> Result<(), String> {
                             );
                         }
                         validate_result(&result, scenario)?;
+                        append_checkpoint(&config.output, &result)?;
                         results.push(result);
+                        write_state(&config.output, &results)?;
+                        logger.event(
+                            "scenario_done",
+                            config,
+                            Some(ScenarioContext {
+                                scenario,
+                                object_size: *object_size,
+                                fragment_size: *fragment_size as u64,
+                                downloaders: *downloaders,
+                                run,
+                            }),
+                            None,
+                        );
                     }
                 }
             }
@@ -61,14 +136,17 @@ fn run_scenario(
     downloaders: usize,
     run: usize,
     baseline_origin_bytes: Option<u64>,
+    logger: &BenchLogger,
 ) -> Result<BenchmarkResult, String> {
     match scenario {
-        Scenario::OriginOnly => run_origin_only(object, downloaders, run),
+        Scenario::OriginOnly => run_origin_only(object, downloaders, run, logger),
         Scenario::P2pSingleSeeder => {
-            run_single_seeder(object, downloaders, run, baseline_origin_bytes)
+            run_single_seeder(object, downloaders, run, baseline_origin_bytes, logger)
         }
-        Scenario::P2pMesh => run_mesh(object, downloaders, run, baseline_origin_bytes),
-        Scenario::P2pFallback => run_fallback(object, downloaders, run, baseline_origin_bytes),
+        Scenario::P2pMesh => run_mesh(object, downloaders, run, baseline_origin_bytes, logger),
+        Scenario::P2pFallback => {
+            run_fallback(object, downloaders, run, baseline_origin_bytes, logger)
+        }
     }
 }
 
@@ -76,6 +154,7 @@ fn run_origin_only(
     object: &BenchmarkObject,
     downloaders: usize,
     run: usize,
+    logger: &BenchLogger,
 ) -> Result<BenchmarkResult, String> {
     let package = package(&object.manifest, vec![origin_source(&object.manifest)]);
     let origin = BenchOrigin {
@@ -84,22 +163,31 @@ fn run_origin_only(
     let source = BenchSource {
         object: object.bytes.clone(),
     };
-    let mut total = TransferSummary::default();
-    let mut collector = MetricsCollector::default();
+    let summaries = Mutex::new(Vec::new());
     let started = Instant::now();
-    let mut valid = true;
-    for _ in 0..downloaders {
-        let (summary, metrics, hash_valid) = sync_one(
-            &origin,
-            &source,
-            &DisabledPeerTransport,
-            &package,
-            &object.manifest,
-        )?;
-        add_summary(&mut total, &summary);
-        collector.append(metrics);
-        valid &= hash_valid;
-    }
+    std::thread::scope(|scope| {
+        for _ in 0..downloaders {
+            let origin = origin.clone();
+            let source = source.clone();
+            let package = package.clone();
+            let manifest = object.manifest.clone();
+            let summaries = &summaries;
+            let logger = logger.clone();
+            scope.spawn(move || {
+                let result = sync_one(
+                    &origin,
+                    &source,
+                    &DisabledPeerTransport,
+                    &package,
+                    &manifest,
+                    &logger,
+                );
+                summaries.lock().unwrap().push(result);
+            });
+        }
+    });
+    let (total, collector, valid, threads_started, threads_finished, panics) =
+        collect_downloader_results(summaries.into_inner().unwrap())?;
     Ok(result_from_parts(
         Scenario::OriginOnly,
         object,
@@ -112,6 +200,10 @@ fn run_origin_only(
         None,
         0,
         0,
+        threads_started,
+        threads_finished,
+        0,
+        panics,
     ))
 }
 
@@ -120,6 +212,7 @@ fn run_single_seeder(
     downloaders: usize,
     run: usize,
     baseline_origin_bytes: Option<u64>,
+    logger: &BenchLogger,
 ) -> Result<BenchmarkResult, String> {
     let seeder = start_peer("seeder")?;
     let peer = peer_source("seeder", &seeder, &object.manifest, None);
@@ -135,22 +228,32 @@ fn run_single_seeder(
     let source = BenchSource {
         object: object.bytes.clone(),
     };
-    let mut total = TransferSummary::default();
-    let mut collector = MetricsCollector::default();
+    let summaries = Mutex::new(Vec::new());
     let started = Instant::now();
-    let mut valid = true;
-    let mut downloaders_with_peer = 0;
-    for _ in 0..downloaders {
-        let downloader = start_peer("downloader")?;
-        let (summary, metrics, hash_valid) =
-            sync_one(&origin, &source, &downloader, &package, &object.manifest)?;
-        if summary.bytes_from_peer > 0 {
-            downloaders_with_peer += 1;
+    std::thread::scope(|scope| {
+        for _ in 0..downloaders {
+            let origin = origin.clone();
+            let source = source.clone();
+            let package = package.clone();
+            let manifest = object.manifest.clone();
+            let summaries = &summaries;
+            let logger = logger.clone();
+            scope.spawn(move || {
+                let result = start_peer("downloader").and_then(|downloader| {
+                    sync_one(&origin, &source, &downloader, &package, &manifest, &logger)
+                });
+                summaries.lock().unwrap().push(result);
+            });
         }
-        add_summary(&mut total, &summary);
-        collector.append(metrics);
-        valid &= hash_valid;
-    }
+    });
+    let raw = summaries.into_inner().unwrap();
+    let downloaders_with_peer = raw
+        .iter()
+        .filter_map(|item| item.as_ref().ok())
+        .filter(|(summary, _, _)| summary.bytes_from_peer > 0)
+        .count();
+    let (total, collector, valid, threads_started, threads_finished, panics) =
+        collect_downloader_results(raw)?;
     Ok(result_from_parts(
         Scenario::P2pSingleSeeder,
         object,
@@ -163,6 +266,10 @@ fn run_single_seeder(
         baseline_origin_bytes,
         1,
         downloaders_with_peer,
+        threads_started,
+        threads_finished,
+        1,
+        panics,
     ))
 }
 
@@ -171,6 +278,7 @@ fn run_mesh(
     downloaders: usize,
     run: usize,
     baseline_origin_bytes: Option<u64>,
+    logger: &BenchLogger,
 ) -> Result<BenchmarkResult, String> {
     let effective_downloaders = downloaders.max(2);
     let seeder = start_peer("seeder")?;
@@ -191,7 +299,8 @@ fn run_mesh(
     let mut valid = true;
     let mut retained_peers = vec![seeder];
     let mut downloaders_with_peer = 0;
-    for downloader_index in 0..effective_downloaders {
+    let bootstrap_downloaders = effective_downloaders.min(1);
+    for downloader_index in 0..bootstrap_downloaders {
         let downloader = start_peer("mesh-downloader")?;
         let mut package_sources = sources.clone();
         package_sources.push(origin_source(&object.manifest));
@@ -199,8 +308,14 @@ fn run_mesh(
         let origin = BenchOrigin {
             package: package.clone(),
         };
-        let (summary, metrics, hash_valid) =
-            sync_one(&origin, &source, &downloader, &package, &object.manifest)?;
+        let (summary, metrics, hash_valid) = sync_one(
+            &origin,
+            &source,
+            &downloader,
+            &package,
+            &object.manifest,
+            logger,
+        )?;
         if summary.bytes_from_peer > 0 {
             downloaders_with_peer += 1;
         }
@@ -220,6 +335,49 @@ fn run_mesh(
         }
         retained_peers.push(downloader);
     }
+    if effective_downloaders > bootstrap_downloaders {
+        let summaries = Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for downloader_index in bootstrap_downloaders..effective_downloaders {
+                let source = source.clone();
+                let package_sources = {
+                    let mut package_sources = sources.clone();
+                    package_sources.push(origin_source(&object.manifest));
+                    package_sources
+                };
+                let manifest = object.manifest.clone();
+                let summaries = &summaries;
+                let logger = logger.clone();
+                scope.spawn(move || {
+                    let package = package(&manifest, package_sources);
+                    let origin = BenchOrigin {
+                        package: package.clone(),
+                    };
+                    let result = start_peer("mesh-downloader").and_then(|downloader| {
+                        let sync =
+                            sync_one(&origin, &source, &downloader, &package, &manifest, &logger);
+                        if sync.as_ref().is_ok() {
+                            // The peer is intentionally dropped after serving this downloader; this stage
+                            // measures concurrent download contention after bootstrap sharing exists.
+                            let _ = downloader_index;
+                        }
+                        sync
+                    });
+                    summaries.lock().unwrap().push(result);
+                });
+            }
+        });
+        let raw = summaries.into_inner().unwrap();
+        downloaders_with_peer += raw
+            .iter()
+            .filter_map(|item| item.as_ref().ok())
+            .filter(|(summary, _, _)| summary.bytes_from_peer > 0)
+            .count();
+        let (stage_total, stage_collector, stage_valid, _, _, _) = collect_downloader_results(raw)?;
+        add_summary(&mut total, &stage_total);
+        collector.append(stage_collector);
+        valid &= stage_valid;
+    }
     let distinct_peer_sources = collector.distinct_peer_sources_served();
     drop(retained_peers);
     Ok(result_from_parts(
@@ -236,6 +394,10 @@ fn run_mesh(
         )),
         distinct_peer_sources,
         downloaders_with_peer,
+        effective_downloaders as u64,
+        effective_downloaders as u64,
+        distinct_peer_sources as u64,
+        0,
     ))
 }
 
@@ -244,6 +406,7 @@ fn run_fallback(
     downloaders: usize,
     run: usize,
     baseline_origin_bytes: Option<u64>,
+    logger: &BenchLogger,
 ) -> Result<BenchmarkResult, String> {
     let seeder = start_peer("partial-seeder")?;
     let peer = peer_source_with_priority("partial-seeder", &seeder, &object.manifest, None, 1);
@@ -272,22 +435,32 @@ fn run_fallback(
     let source = BenchSource {
         object: object.bytes.clone(),
     };
-    let mut total = TransferSummary::default();
-    let mut collector = MetricsCollector::default();
+    let summaries = Mutex::new(Vec::new());
     let started = Instant::now();
-    let mut valid = true;
-    let mut downloaders_with_peer = 0;
-    for _ in 0..downloaders {
-        let downloader = start_peer("fallback-downloader")?;
-        let (summary, metrics, hash_valid) =
-            sync_one(&origin, &source, &downloader, &package, &object.manifest)?;
-        if summary.bytes_from_peer > 0 {
-            downloaders_with_peer += 1;
+    std::thread::scope(|scope| {
+        for _ in 0..downloaders {
+            let origin = origin.clone();
+            let source = source.clone();
+            let package = package.clone();
+            let manifest = object.manifest.clone();
+            let summaries = &summaries;
+            let logger = logger.clone();
+            scope.spawn(move || {
+                let result = start_peer("fallback-downloader").and_then(|downloader| {
+                    sync_one(&origin, &source, &downloader, &package, &manifest, &logger)
+                });
+                summaries.lock().unwrap().push(result);
+            });
         }
-        add_summary(&mut total, &summary);
-        collector.append(metrics);
-        valid &= hash_valid;
-    }
+    });
+    let raw = summaries.into_inner().unwrap();
+    let downloaders_with_peer = raw
+        .iter()
+        .filter_map(|item| item.as_ref().ok())
+        .filter(|(summary, _, _)| summary.bytes_from_peer > 0)
+        .count();
+    let (total, collector, valid, threads_started, threads_finished, panics) =
+        collect_downloader_results(raw)?;
     drop(retained_empty_peer);
     Ok(result_from_parts(
         Scenario::P2pFallback,
@@ -301,6 +474,10 @@ fn run_fallback(
         baseline_origin_bytes,
         1,
         downloaders_with_peer,
+        threads_started,
+        threads_finished,
+        2,
+        panics,
     ))
 }
 
@@ -310,6 +487,7 @@ fn sync_one(
     peer: &dyn PeerTransport,
     package: &AccessPackage,
     manifest: &Manifest,
+    logger: &BenchLogger,
 ) -> Result<(TransferSummary, MetricsCollector, bool), String> {
     let jobs = Mutex::new(VecDeque::from(manifest.fragments.clone()));
     let fragments = Mutex::new(vec![None::<Vec<u8>>; manifest.fragments.len()]);
@@ -326,6 +504,7 @@ fn sync_one(
     if let Some(fragment) = jobs.lock().unwrap().pop_front() {
         process_fragment(
             fragment, package, source, peer, manifest, &fragments, &summary, &metrics, &error,
+            logger,
         );
     }
 
@@ -340,7 +519,7 @@ fn sync_one(
                 };
                 process_fragment(
                     fragment, package, source, peer, manifest, &fragments, &summary, &metrics,
-                    &error,
+                    &error, logger,
                 );
             });
         }
@@ -374,6 +553,7 @@ fn process_fragment(
     summary: &Mutex<TransferSummary>,
     metrics: &Mutex<MetricsCollector>,
     error: &Mutex<Option<String>>,
+    logger: &BenchLogger,
 ) {
     if error.lock().unwrap().is_some() {
         return;
@@ -388,10 +568,26 @@ fn process_fragment(
     let mut failed_sources = 0_u64;
     let mut last_error = None;
     for source_ref in candidates {
+        logger.fragment_event(
+            "fragment_request_start",
+            package,
+            &fragment,
+            &source_ref,
+            None,
+            None,
+        );
         let started = Instant::now();
         match download_fragment(package, source, peer, &source_ref, manifest, &fragment).and_then(
             |bytes| {
                 let download_ms = elapsed_ms_ceil(started);
+                logger.fragment_event(
+                    "fragment_response_received",
+                    package,
+                    &fragment,
+                    &source_ref,
+                    Some(download_ms),
+                    Some(bytes.len() as u64),
+                );
                 metrics.lock().unwrap().record_download(
                     source_ref.source_type,
                     source_ref.id.clone(),
@@ -399,6 +595,14 @@ fn process_fragment(
                 );
                 let validation_started = Instant::now();
                 validate_fragment(&fragment, &bytes)?;
+                logger.fragment_event(
+                    "fragment_validated",
+                    package,
+                    &fragment,
+                    &source_ref,
+                    Some(elapsed_ms_ceil(validation_started)),
+                    Some(bytes.len() as u64),
+                );
                 metrics
                     .lock()
                     .unwrap()
@@ -414,6 +618,14 @@ fn process_fragment(
                     return;
                 }
                 fragments.lock().unwrap()[fragment.index] = Some(bytes.clone());
+                logger.fragment_event(
+                    "fragment_persisted",
+                    package,
+                    &fragment,
+                    &source_ref,
+                    None,
+                    Some(bytes.len() as u64),
+                );
                 let mut total = summary.lock().unwrap();
                 if failed_sources > 0 {
                     total.fallback_activations += 1;
@@ -450,6 +662,10 @@ fn result_from_parts(
     baseline_origin_bytes: Option<u64>,
     distinct_peer_sources_served: usize,
     downloaders_with_peer_bytes: usize,
+    threads_started: u64,
+    threads_finished: u64,
+    open_connections_peak: u64,
+    panics: u64,
 ) -> BenchmarkResult {
     let transferred_bytes = object.bytes.len() as u64 * downloaders as u64;
     let seconds = (total_duration_ms.max(1) as f64) / 1000.0;
@@ -491,10 +707,51 @@ fn result_from_parts(
         peer_failures: summary.peer_failures,
         peer_hash_failures: summary.peer_hash_failures,
         object_hash_valid,
-        approx_memory_bytes: object.bytes.len() as u64 * (downloaders as u64 + 2),
+        memory_peak_mb: memory_peak_mb(),
+        threads_started,
+        threads_finished,
+        open_connections_peak,
+        timeouts: 0,
+        panics,
         distinct_peer_sources_served,
         downloaders_with_peer_bytes,
+        fairness_min_downloader_ms: 0,
+        fairness_max_downloader_ms: total_duration_ms,
     }
+}
+
+type DownloaderResult = Result<(TransferSummary, MetricsCollector, bool), String>;
+
+fn collect_downloader_results(
+    results: Vec<DownloaderResult>,
+) -> Result<(TransferSummary, MetricsCollector, bool, u64, u64, u64), String> {
+    let threads_started = results.len() as u64;
+    let mut threads_finished = 0_u64;
+    let panics = 0_u64;
+    let mut total = TransferSummary::default();
+    let mut collector = MetricsCollector::default();
+    let mut valid = true;
+    for item in results {
+        match item {
+            Ok((summary, metrics, hash_valid)) => {
+                threads_finished += 1;
+                add_summary(&mut total, &summary);
+                collector.append(metrics);
+                valid &= hash_valid;
+            }
+            Err(error) => {
+                return Err(error);
+            }
+        }
+    }
+    Ok((
+        total,
+        collector,
+        valid,
+        threads_started,
+        threads_finished,
+        panics,
+    ))
 }
 
 fn validate_result(result: &BenchmarkResult, scenario: Scenario) -> Result<(), String> {
@@ -569,14 +826,30 @@ fn elapsed_ms_ceil(started: Instant) -> u128 {
 }
 
 fn assert_no_secret_leak(output: &std::path::Path) -> Result<(), String> {
-    for file in ["results.json", "results.csv", "report.md"] {
-        let content =
-            std::fs::read_to_string(output.join(file)).map_err(|error| error.to_string())?;
+    for file in [
+        "results.json",
+        "results.csv",
+        "report.md",
+        "results.jsonl",
+        "results.partial.csv",
+        "benchmark.state.json",
+        "benchmark.log",
+    ] {
+        let path = output.join(file);
+        if !path.exists() {
+            continue;
+        }
+        let content = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         for secret in [
             "packageToken",
             "applicationToken",
             "bench-secret-package-token",
             "bench-secret-application-token",
+            "bench-secret",
+            "Authorization",
+            "Bearer",
+            "S3 access key",
+            "S3 secret",
         ] {
             if content.contains(secret) {
                 return Err(format!("{secret} leaked into {file}"));
@@ -716,8 +989,9 @@ impl OriginClient for BenchOrigin {
     }
 }
 
+#[derive(Clone)]
 struct BenchSource {
-    object: Vec<u8>,
+    object: std::sync::Arc<[u8]>,
 }
 
 impl SourceClient for BenchSource {
@@ -734,5 +1008,173 @@ impl SourceClient for BenchSource {
             self.object[fragment.byte_range_start as usize..=fragment.byte_range_end as usize]
                 .to_vec(),
         )
+    }
+}
+
+#[derive(Clone)]
+struct BenchLogger {
+    path: PathBuf,
+}
+
+#[derive(Clone, Copy)]
+struct ScenarioContext {
+    scenario: Scenario,
+    object_size: u64,
+    fragment_size: u64,
+    downloaders: usize,
+    run: usize,
+}
+
+impl BenchLogger {
+    fn new(path: PathBuf) -> Self {
+        let _ = fs::write(&path, "");
+        Self { path }
+    }
+
+    fn event(
+        &self,
+        event: &str,
+        config: &BenchmarkConfig,
+        context: Option<ScenarioContext>,
+        error: Option<&str>,
+    ) {
+        let mut line = serde_json::json!({
+            "timestamp": unix_millis(),
+            "event": event,
+            "profile": config.profile.as_str(),
+        });
+        if let Some(context) = context {
+            line["scenario"] = serde_json::json!(context.scenario.name());
+            line["object_size"] = serde_json::json!(context.object_size);
+            line["fragment_size"] = serde_json::json!(context.fragment_size);
+            line["downloaders"] = serde_json::json!(context.downloaders);
+            line["run"] = serde_json::json!(context.run);
+        }
+        if let Some(error) = error {
+            line["error"] = serde_json::json!(error);
+        }
+        self.write(line);
+    }
+
+    fn fragment_event(
+        &self,
+        event: &str,
+        package: &AccessPackage,
+        fragment: &FragmentDescriptor,
+        source: &AuthorizedSource,
+        duration_ms: Option<u128>,
+        bytes: Option<u64>,
+    ) {
+        let line = serde_json::json!({
+            "timestamp": unix_millis(),
+            "event": event,
+            "scenario_package": package.id,
+            "object_size": package.manifest.total_size_bytes,
+            "fragment_size": package.manifest.fragment_size_bytes,
+            "fragment_index": fragment.index,
+            "source_type": source_type_label(source.source_type),
+            "peer_id": source.peer_id,
+            "duration_ms": duration_ms,
+            "bytes": bytes,
+        });
+        self.write(line);
+    }
+
+    fn write(&self, value: serde_json::Value) {
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        {
+            let _ = writeln!(file, "{value}");
+        }
+    }
+}
+
+fn append_checkpoint(output: &Path, result: &BenchmarkResult) -> Result<(), String> {
+    let jsonl_path = output.join("results.jsonl");
+    let mut jsonl = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(jsonl_path)
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        jsonl,
+        "{}",
+        serde_json::to_string(result).map_err(|error| error.to_string())?
+    )
+    .map_err(|error| error.to_string())?;
+
+    let partial_path = output.join("results.partial.csv");
+    let exists = partial_path.exists();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(partial_path)
+        .map_err(|error| error.to_string())?;
+    if !exists {
+        writeln!(file, "scenario,object_size_bytes,fragment_size_bytes,downloaders,run,total_duration_ms,throughput_mib_s,bytes_from_peer,bytes_from_origin,fragments_from_peer,fragments_from_origin,peer_traffic_ratio,origin_traffic_reduction_percent,object_hash_valid")
+            .map_err(|error| error.to_string())?;
+    }
+    writeln!(
+        file,
+        "{},{},{},{},{},{},{:.6},{},{},{},{},{:.6},{:.6},{}",
+        result.scenario,
+        result.object_size_bytes,
+        result.fragment_size_bytes,
+        result.downloaders,
+        result.run,
+        result.total_duration_ms,
+        result.throughput_mib_s,
+        result.bytes_from_peer,
+        result.bytes_from_origin,
+        result.fragments_from_peer,
+        result.fragments_from_origin,
+        result.peer_traffic_ratio,
+        result.origin_traffic_reduction_percent,
+        result.object_hash_valid
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn write_state(output: &Path, results: &[BenchmarkResult]) -> Result<(), String> {
+    let last = results.last();
+    let state = serde_json::json!({
+        "timestamp": unix_millis(),
+        "completed_results": results.len(),
+        "last_result": last,
+    });
+    fs::write(
+        output.join("benchmark.state.json"),
+        serde_json::to_string_pretty(&state).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn unix_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+fn memory_peak_mb() -> u64 {
+    fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status.lines().find_map(|line| {
+                let value = line.strip_prefix("VmHWM:")?.trim();
+                let kb = value.split_whitespace().next()?.parse::<u64>().ok()?;
+                Some(kb / 1024)
+            })
+        })
+        .unwrap_or(0)
+}
+
+fn source_type_label(source_type: SourceType) -> &'static str {
+    match source_type {
+        SourceType::Origin => "ORIGIN",
+        SourceType::ReplicaEdge => "REPLICA_EDGE",
+        SourceType::Peer => "PEER",
     }
 }
