@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use crate::client::{OriginClient, SourceClient};
 use crate::contracts::{AuthorizedSource, SourceType};
@@ -11,6 +12,43 @@ use super::fragment_downloader::download_fragment;
 use super::{ProgressMap, SourceSelector};
 
 pub type ProgressCallback<'a> = &'a mut dyn FnMut(u32, u64, u64, &str);
+pub type TransferObserver<'a> = &'a mut dyn FnMut(TransferEvent);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransferEvent {
+    TransferStarted,
+    FragmentDownloadStarted {
+        fragment_index: usize,
+        source_type: SourceType,
+        source_id: String,
+    },
+    FragmentDownloadFinished {
+        fragment_index: usize,
+        source_type: SourceType,
+        source_id: String,
+        duration_ms: u128,
+        bytes: u64,
+    },
+    FragmentValidated {
+        fragment_index: usize,
+        source_type: SourceType,
+        duration_ms: u128,
+        bytes: u64,
+    },
+    FragmentRejected {
+        fragment_index: usize,
+        source_type: SourceType,
+        reason: String,
+    },
+    FallbackActivated {
+        fragment_index: usize,
+        source_type: SourceType,
+    },
+    ObjectAssembled {
+        bytes: u64,
+    },
+    TransferFinished,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TransferSummary {
@@ -57,13 +95,34 @@ pub fn sync_object_with_summary(
     peer: &dyn PeerTransport,
     storage: &mut dyn StorageAdapter,
     request: &SyncObjectRequest,
+    progress: Option<ProgressCallback<'_>>,
+) -> Result<SyncObjectResult, PontemeshError> {
+    sync_object_with_summary_and_observer(
+        origin,
+        source_client,
+        peer,
+        storage,
+        request,
+        progress,
+        None,
+    )
+}
+
+pub fn sync_object_with_summary_and_observer(
+    origin: &dyn OriginClient,
+    source_client: &dyn SourceClient,
+    peer: &dyn PeerTransport,
+    storage: &mut dyn StorageAdapter,
+    request: &SyncObjectRequest,
     mut progress: Option<ProgressCallback<'_>>,
+    mut observer: Option<TransferObserver<'_>>,
 ) -> Result<SyncObjectResult, PontemeshError> {
     if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
         return Err(PontemeshError::InvalidArgument(
             "bucket and key are required".to_string(),
         ));
     }
+    emit(&mut observer, TransferEvent::TransferStarted);
 
     let package = origin.create_access_package(&request.bucket, &request.key)?;
     origin.record_event(
@@ -99,14 +158,50 @@ pub fn sync_object_with_summary(
 
         let mut failed_sources = 0_u64;
         for source in candidate_sources {
+            emit(
+                &mut observer,
+                TransferEvent::FragmentDownloadStarted {
+                    fragment_index: fragment.index,
+                    source_type: source.source_type,
+                    source_id: source.id.clone(),
+                },
+            );
+            let download_started = Instant::now();
             match download_fragment(&package, source_client, peer, &source, &manifest, &fragment)
                 .and_then(|bytes| {
+                    emit(
+                        &mut observer,
+                        TransferEvent::FragmentDownloadFinished {
+                            fragment_index: fragment.index,
+                            source_type: source.source_type,
+                            source_id: source.id.clone(),
+                            duration_ms: elapsed_ms_ceil(download_started),
+                            bytes: bytes.len() as u64,
+                        },
+                    );
+                    let validation_started = Instant::now();
                     validate_fragment(&fragment, &bytes)?;
+                    emit(
+                        &mut observer,
+                        TransferEvent::FragmentValidated {
+                            fragment_index: fragment.index,
+                            source_type: source.source_type,
+                            duration_ms: elapsed_ms_ceil(validation_started),
+                            bytes: bytes.len() as u64,
+                        },
+                    );
                     Ok(bytes)
                 }) {
                 Ok(bytes) => {
                     if failed_sources > 0 {
                         summary.fallback_activations += 1;
+                        emit(
+                            &mut observer,
+                            TransferEvent::FallbackActivated {
+                                fragment_index: fragment.index,
+                                source_type: source.source_type,
+                            },
+                        );
                     }
                     storage.write_validated_fragment(&manifest, &fragment, &bytes)?;
                     if let Some(available_fragments) =
@@ -145,6 +240,14 @@ pub fn sync_object_with_summary(
                 Err(error) => {
                     failed_sources += 1;
                     record_summary_failure(&mut summary, source.source_type, &error);
+                    emit(
+                        &mut observer,
+                        TransferEvent::FragmentRejected {
+                            fragment_index: fragment.index,
+                            source_type: source.source_type,
+                            reason: error.to_string(),
+                        },
+                    );
                     let _ = origin.record_event(
                         &package.id,
                         &package.package_token,
@@ -165,6 +268,12 @@ pub fn sync_object_with_summary(
     }
 
     let object = storage.assemble(&manifest)?;
+    emit(
+        &mut observer,
+        TransferEvent::ObjectAssembled {
+            bytes: object.len() as u64,
+        },
+    );
     let digest = sha256_hex(&object);
     if !digest.eq_ignore_ascii_case(&manifest.object_sha256) {
         return Err(PontemeshError::HashMismatch(
@@ -180,6 +289,7 @@ pub fn sync_object_with_summary(
         None,
         None,
     )?;
+    emit(&mut observer, TransferEvent::TransferFinished);
     Ok(SyncObjectResult {
         bytes: object,
         summary,
@@ -227,5 +337,20 @@ fn record_summary_failure(
     if matches!(error, PontemeshError::HashMismatch(_)) {
         summary.peer_hash_failures += 1;
         summary.peer_rejected_fragments += 1;
+    }
+}
+
+fn emit(observer: &mut Option<TransferObserver<'_>>, event: TransferEvent) {
+    if let Some(callback) = observer.as_deref_mut() {
+        callback(event);
+    }
+}
+
+fn elapsed_ms_ceil(started: Instant) -> u128 {
+    let nanos = started.elapsed().as_nanos();
+    if nanos == 0 {
+        0
+    } else {
+        nanos.div_ceil(1_000_000)
     }
 }

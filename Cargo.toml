@@ -1,7 +1,8 @@
 [workspace]
 members = [
   "crates/pontemesh-sdk-core",
-  "bindings/c"
+  "bindings/c",
+  "tools/p2p-bench"
 ]
 resolver = "2"
 
@@ -10,4 +11,3 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://example.com/pontemesh-sdk"
-
