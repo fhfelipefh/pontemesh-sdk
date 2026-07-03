@@ -4,7 +4,6 @@ use crate::errors::PontemeshError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum P2pTransportKind {
     Libp2p,
-    ExperimentalTcp,
     Disabled,
 }
 

@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-tcp-dev")]
+
 use std::sync::{Arc, Mutex};
 
 use pontemesh_sdk_core::client::{OriginClient, SourceClient};

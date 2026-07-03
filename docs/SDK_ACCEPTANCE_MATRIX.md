@@ -40,10 +40,13 @@
 ## Validation Commands
 
 ```bash
-cargo fmt
+cargo fmt -- --check
 cargo test
-cargo test -p pontemesh-sdk-core --test p2p_mesh_simulation -- --ignored --nocapture
-cargo test -p pontemesh-sdk-core --test p2p_malicious_peer -- --ignored --nocapture
-cargo test -p pontemesh-sdk-core --test p2p_traffic_reduction -- --ignored --nocapture
+cargo test -p pontemesh-sdk-core --test libp2p_mesh_simulation -- --ignored --nocapture
+cargo test -p pontemesh-sdk-core --test libp2p_malicious_peer -- --ignored --nocapture
+cargo test -p pontemesh-sdk-core --test libp2p_traffic_reduction -- --ignored --nocapture
 cargo build --release
+cargo build -p pontemesh-sdk-c --release
+./scripts/tcc-libp2p-gate.sh
+./scripts/production-no-mock-gate.sh
 ```

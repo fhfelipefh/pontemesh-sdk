@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-tcp-dev")]
+
 use pontemesh_sdk_core::client::{OriginClient, SourceClient};
 use pontemesh_sdk_core::contracts::*;
 use pontemesh_sdk_core::download::{sync_object_with_summary, SyncObjectRequest, TransferSummary};

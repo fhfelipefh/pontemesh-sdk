@@ -26,7 +26,6 @@ impl PontemeshClient {
                     Libp2pTransport::start(&config.p2p.listen_addrs, &config.p2p.announce_addrs)
                         .map(|peer| Box::new(peer) as Box<dyn PeerTransport>)
                 }
-                P2pTransportKind::ExperimentalTcp => Err(PontemeshError::PeerTransportNotEnabled),
                 P2pTransportKind::Disabled => Err(PontemeshError::PeerTransportNotEnabled),
             };
             match started {

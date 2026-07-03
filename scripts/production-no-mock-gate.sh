@@ -7,11 +7,15 @@ echo "Checking forbidden production markers..."
 
 SEARCH_PATHS="crates bindings examples docs README.md Cargo.toml"
 
-if grep -RInE "$FORBIDDEN_REGEX" $SEARCH_PATHS \
+forbidden_hits=$(grep -RInE "$FORBIDDEN_REGEX" $SEARCH_PATHS \
   --exclude-dir=target \
   --exclude-dir=.git \
   --exclude-dir=tests \
-  --exclude='Cargo.lock'; then
+  --exclude='Cargo.lock' \
+  | grep -v 'production-no-mock-gate.sh' || true)
+
+if [[ -n "$forbidden_hits" ]]; then
+  echo "$forbidden_hits"
   echo "Forbidden mock/placeholder/partial marker found."
   exit 1
 fi

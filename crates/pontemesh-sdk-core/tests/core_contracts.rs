@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+#[cfg(feature = "legacy-tcp-dev")]
 use std::io::{BufRead, BufReader, Write};
+#[cfg(feature = "legacy-tcp-dev")]
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "legacy-tcp-dev")]
 use std::thread;
 
 use pontemesh_sdk_core::client::{OriginClient, SourceClient};
@@ -12,10 +15,9 @@ use pontemesh_sdk_core::download::{
 };
 use pontemesh_sdk_core::errors::PontemeshError;
 use pontemesh_sdk_core::integrity::{sha256_hex, validate_fragment};
-use pontemesh_sdk_core::p2p::{
-    CircuitState, DisabledPeerTransport, P2pConfig, P2pTransportKind, PeerClient, PeerServer,
-    PeerTransport,
-};
+#[cfg(feature = "legacy-tcp-dev")]
+use pontemesh_sdk_core::p2p::{CircuitState, PeerClient, PeerServer};
+use pontemesh_sdk_core::p2p::{DisabledPeerTransport, P2pConfig, P2pTransportKind, PeerTransport};
 use pontemesh_sdk_core::storage::{MemoryStorage, StorageAdapter};
 
 fn fragment(index: usize, bytes: &[u8]) -> FragmentDescriptor {
@@ -45,6 +47,7 @@ fn source(id: &str, source_type: SourceType, priority: u8) -> AuthorizedSource {
     }
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 fn peer_source(id: &str, endpoint: &str) -> AuthorizedSource {
     AuthorizedSource {
         id: id.to_string(),
@@ -58,6 +61,7 @@ fn peer_source(id: &str, endpoint: &str) -> AuthorizedSource {
     }
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 fn peer_source_with_id(id: &str, endpoint: &str, peer_id: &str) -> AuthorizedSource {
     let mut source = peer_source(id, endpoint);
     source.peer_id = Some(peer_id.to_string());
@@ -364,7 +368,7 @@ fn p2p_required_returns_startup_error_instead_of_silent_disable() {
             p2p: P2pConfig {
                 enabled: true,
                 required: true,
-                transport: P2pTransportKind::ExperimentalTcp,
+                transport: P2pTransportKind::Disabled,
                 listen_addrs: Vec::new(),
                 announce_addrs: Vec::new(),
                 listen_addr: Some("127.0.0.1:1:not-a-socket".to_string()),
@@ -376,6 +380,7 @@ fn p2p_required_returns_startup_error_instead_of_silent_disable() {
     assert!(result.is_err());
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn peer_transport_starts_serves_and_stops() {
     let bytes = b"peer-fragment";
@@ -394,6 +399,7 @@ fn peer_transport_starts_serves_and_stops() {
     server.stop();
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn peer_a_serves_validated_fragment_to_peer_b() {
     let bytes = b"peer-fragment";
@@ -423,6 +429,7 @@ fn peer_a_serves_validated_fragment_to_peer_b() {
     validate_fragment(&package.manifest.fragments[0], &downloaded).expect("hash valid");
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn authorized_peer_id_is_accepted_and_different_peer_id_is_rejected() {
     let bytes = b"peer-fragment";
@@ -456,6 +463,7 @@ fn authorized_peer_id_is_accepted_and_different_peer_id_is_rejected() {
     assert!(matches!(result, Err(PontemeshError::AccessDenied(_))));
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn expired_peer_source_is_ignored() {
     let bytes = b"hello";
@@ -471,6 +479,7 @@ fn expired_peer_source_is_ignored() {
     assert_eq!(order_sources_for_test(&ordered), vec![SourceType::Origin]);
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn peer_rejects_fragment_that_was_not_validated_before_sharing() {
     let bytes = b"peer-fragment";
@@ -488,6 +497,7 @@ fn peer_rejects_fragment_that_was_not_validated_before_sharing() {
     assert!(server.available_fragments().is_empty());
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn peer_b_rejects_invalid_hash_from_peer_response() {
     let bytes = b"peer-fragment";
@@ -529,6 +539,7 @@ fn peer_b_rejects_invalid_hash_from_peer_response() {
     assert!(matches!(result, Err(PontemeshError::HashMismatch(_))));
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn oversized_peer_frame_is_rejected() {
     let bytes = b"peer-fragment";
@@ -555,6 +566,7 @@ fn oversized_peer_frame_is_rejected() {
     assert!(matches!(result, Err(PontemeshError::InvalidArgument(_))));
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn circuit_breaker_opens_after_repeated_peer_failures() {
     let bytes = b"peer-fragment";
@@ -578,6 +590,7 @@ fn circuit_breaker_opens_after_repeated_peer_failures() {
     assert!(!peer_b.can_handle(&source));
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn peer_request_does_not_send_application_or_package_token() {
     let bytes = b"peer-fragment";
@@ -615,6 +628,7 @@ fn peer_request_does_not_send_application_or_package_token() {
     assert!(!request.contains("application-token"));
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn source_selector_does_not_use_peer_outside_authorized_sources() {
     let bytes = b"hello";
@@ -634,6 +648,7 @@ fn source_selector_does_not_use_peer_outside_authorized_sources() {
     );
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn validated_fragment_becomes_shareable_only_when_origin_policy_allows() {
     let bytes = b"peer-fragment";
@@ -663,6 +678,7 @@ fn validated_fragment_becomes_shareable_only_when_origin_policy_allows() {
     assert!(denied_server.available_fragments().is_empty());
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn sdk_announces_availability_to_origin_after_validation() {
     let bytes = b"hello";
@@ -700,6 +716,7 @@ fn sdk_announces_availability_to_origin_after_validation() {
     assert_eq!(announcements[0].1, vec![0]);
 }
 
+#[cfg(feature = "legacy-tcp-dev")]
 #[test]
 fn local_two_peer_integration_downloads_peer_before_fallbacks() {
     let bytes = b"hello";

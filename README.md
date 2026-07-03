@@ -35,10 +35,13 @@ client.sync_object(SyncObjectRequest {
 
 ## Validate
 
+Production P2P defaults to libp2p + Noise + Yamux + request-response CBOR. The old TCP peer client/server is isolated behind the `legacy-tcp-dev` feature, which is disabled by default and is not part of the production gate.
+
 ```bash
-cargo fmt
+cargo fmt -- --check
 cargo test
 cargo build --release
 cargo build -p pontemesh-sdk-c --release
-./scripts/check-no-dead-code.sh
+./scripts/tcc-libp2p-gate.sh
+./scripts/production-no-mock-gate.sh
 ```
