@@ -100,6 +100,9 @@ enum WorkerCommand {
     Stop,
 }
 
+type FragmentReply = mpsc::Sender<Result<(PeerId, Libp2pFragmentResponse), PontemeshError>>;
+type PendingRequests = HashMap<request_response::OutboundRequestId, FragmentReply>;
+
 pub struct Libp2pTransport {
     peer_id: PeerId,
     command_tx: tokio_mpsc::UnboundedSender<WorkerCommand>,
@@ -185,6 +188,7 @@ impl Libp2pTransport {
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn validate_response(
         &self,
         source: &AuthorizedSource,
@@ -232,6 +236,12 @@ impl Libp2pTransport {
             ));
         }
         Ok(())
+    }
+}
+
+impl Default for Libp2pTransport {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -430,10 +440,7 @@ async fn run_swarm(
 
     let mut store = PeerStore::default();
     let mut local_endpoint: Option<String> = None;
-    let mut pending: HashMap<
-        request_response::OutboundRequestId,
-        mpsc::Sender<Result<(PeerId, Libp2pFragmentResponse), PontemeshError>>,
-    > = HashMap::new();
+    let mut pending: PendingRequests = HashMap::new();
     let mut ready_tx = Some(ready_tx);
 
     let result = 'worker: loop {
@@ -500,10 +507,7 @@ fn send_fragment_request(
         Libp2pFragmentRequest,
         Libp2pFragmentResponse,
     >,
-    pending: &mut HashMap<
-        request_response::OutboundRequestId,
-        mpsc::Sender<Result<(PeerId, Libp2pFragmentResponse), PontemeshError>>,
-    >,
+    pending: &mut PendingRequests,
     peer_id: PeerId,
     request: Libp2pFragmentRequest,
     reply: mpsc::Sender<Result<(PeerId, Libp2pFragmentResponse), PontemeshError>>,
@@ -519,13 +523,10 @@ fn handle_request_response_event(
         Libp2pFragmentRequest,
         Libp2pFragmentResponse,
     >,
-    pending: &mut HashMap<
-        request_response::OutboundRequestId,
-        mpsc::Sender<Result<(PeerId, Libp2pFragmentResponse), PontemeshError>>,
-    >,
+    pending: &mut PendingRequests,
 ) {
     match event {
-        RequestResponseEvent::Message { peer, message } => match message {
+        RequestResponseEvent::Message { peer, message, .. } => match message {
             RequestResponseMessage::Request {
                 request, channel, ..
             } => {

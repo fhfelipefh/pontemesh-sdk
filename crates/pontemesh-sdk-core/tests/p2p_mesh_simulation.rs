@@ -10,10 +10,12 @@ use pontemesh_sdk_core::integrity::sha256_hex;
 use pontemesh_sdk_core::p2p::{PeerClient, PeerServer, PeerTransport};
 use pontemesh_sdk_core::storage::MemoryStorage;
 
+type Announcements = Arc<Mutex<Vec<(String, Vec<usize>)>>>;
+
 #[derive(Clone)]
 struct MeshOrigin {
     package: AccessPackage,
-    announcements: Arc<Mutex<Vec<(String, Vec<usize>)>>>,
+    announcements: Announcements,
 }
 
 impl OriginClient for MeshOrigin {

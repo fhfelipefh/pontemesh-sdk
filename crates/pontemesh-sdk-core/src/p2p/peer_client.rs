@@ -206,6 +206,7 @@ impl PeerTransport for PeerClient {
 }
 
 impl PeerClient {
+    #[allow(clippy::too_many_arguments)]
     fn download_fragment_inner(
         &self,
         _source: &AuthorizedSource,

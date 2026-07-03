@@ -650,6 +650,7 @@ fn process_fragment(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn result_from_parts(
     scenario: Scenario,
     object: &BenchmarkObject,

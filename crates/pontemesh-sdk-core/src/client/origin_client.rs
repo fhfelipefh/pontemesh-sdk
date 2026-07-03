@@ -28,6 +28,7 @@ pub trait OriginClient: Send + Sync {
         key: &str,
     ) -> Result<AccessPackage, PontemeshError>;
     fn get_manifest(&self, bucket: &str, key: &str) -> Result<Manifest, PontemeshError>;
+    #[allow(clippy::too_many_arguments)]
     fn record_event(
         &self,
         _package_id: &str,

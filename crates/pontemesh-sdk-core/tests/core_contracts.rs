@@ -20,6 +20,8 @@ use pontemesh_sdk_core::p2p::{CircuitState, PeerClient, PeerServer};
 use pontemesh_sdk_core::p2p::{DisabledPeerTransport, P2pConfig, P2pTransportKind, PeerTransport};
 use pontemesh_sdk_core::storage::{MemoryStorage, StorageAdapter};
 
+type Announcements = Arc<Mutex<Vec<(String, Vec<usize>)>>>;
+
 fn fragment(index: usize, bytes: &[u8]) -> FragmentDescriptor {
     FragmentDescriptor {
         index,
@@ -158,7 +160,7 @@ fn valid_fragment_sha256_is_accepted_and_invalid_is_rejected() {
 #[derive(Clone)]
 struct FakeOrigin {
     package: AccessPackage,
-    announcements: Arc<Mutex<Vec<(String, Vec<usize>)>>>,
+    announcements: Announcements,
 }
 
 impl OriginClient for FakeOrigin {

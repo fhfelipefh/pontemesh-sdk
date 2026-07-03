@@ -131,7 +131,7 @@ fn write_report(path: &Path, results: &[BenchmarkResult]) -> Result<(), String> 
     report.push_str("- libp2p transport: request-response CBOR\n");
     report.push_str("- secure channel: Noise\n");
     report.push_str("- multiplexer: Yamux\n\n");
-    report.push_str("- libp2p version: 0.54\n\n");
+    report.push_str("- libp2p version: 0.56\n\n");
     report.push_str("## Cenários\n\n");
     report.push_str("- Origin-only baseline\n- P2P com 1 seeder\n- P2P em malha\n- P2P com falha parcial e fallback\n\n");
     report.push_str("## Resultados resumidos\n\n");
