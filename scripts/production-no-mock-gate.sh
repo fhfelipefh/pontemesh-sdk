@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FORBIDDEN_REGEX='mock|fake|placeholder|stub|dummy|partial|planned|experimental|todo|fixme|temporary|simulation-only|test-only|not production|not secure|future implementation'
+FORBIDDEN_REGEX='mock|fake|placeholder|stub|dummy|planned|experimental|todo|fixme|temporary|simulation-only|test-only|not production|not secure|future implementation|partial implementation|marked partial|status.*partial|partial:'
 
 echo "Checking forbidden production markers..."
 

@@ -1,13 +1,21 @@
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
+use futures::StreamExt;
+use libp2p::request_response::{
+    Config as RequestResponseConfig, Event as RequestResponseEvent,
+    Message as RequestResponseMessage, ProtocolSupport,
+};
+use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
+use libp2p::{identity, noise, ping, request_response, yamux, Multiaddr, PeerId, StreamProtocol};
 use pontemesh_sdk_core::client::{OriginClient, SourceClient};
 use pontemesh_sdk_core::contracts::*;
 use pontemesh_sdk_core::download::{sync_object_with_summary, SyncObjectRequest};
 use pontemesh_sdk_core::errors::PontemeshError;
 use pontemesh_sdk_core::integrity::sha256_hex;
+use pontemesh_sdk_core::p2p::{Libp2pFragmentRequest, Libp2pFragmentResponse, FRAGMENT_PROTOCOL};
 use pontemesh_sdk_core::storage::MemoryStorage;
 
 #[derive(Clone)]
@@ -135,13 +143,13 @@ fn expired_peer_is_ignored_and_origin_completes() {
 #[ignore]
 fn peer_request_never_contains_path_traversal_or_tokens() {
     let captured = Arc::new(Mutex::new(String::new()));
-    let endpoint = malicious_peer(MaliciousMode::WrongHash, captured.clone());
+    let (endpoint, peer_id) = malicious_peer(MaliciousMode::WrongHash, captured.clone());
     let bytes = b"secure-fragment".to_vec();
     let manifest = manifest(&bytes);
     let package = package(
         manifest.clone(),
         vec![
-            peer_source("malicious", &endpoint, "malicious", "2099-01-01T00:00:00Z"),
+            peer_source("malicious", &endpoint, &peer_id, "2099-01-01T00:00:00Z"),
             origin_source(),
         ],
     );
@@ -173,13 +181,23 @@ fn run_malicious_case(
     assert_summary: impl FnOnce(pontemesh_sdk_core::download::TransferSummary),
 ) {
     let captured = Arc::new(Mutex::new(String::new()));
-    let endpoint = malicious_peer(mode, captured);
+    let (endpoint, peer_id) = malicious_peer(mode, captured);
+    let authorized_peer_id = if matches!(mode, MaliciousMode::WrongPeerId) {
+        PeerId::from(identity::Keypair::generate_ed25519().public()).to_string()
+    } else {
+        peer_id
+    };
     let bytes = b"secure-fragment".to_vec();
     let manifest = manifest(&bytes);
     let package = package(
         manifest.clone(),
         vec![
-            peer_source("malicious", &endpoint, "malicious", "2099-01-01T00:00:00Z"),
+            peer_source(
+                "malicious",
+                &endpoint,
+                &authorized_peer_id,
+                "2099-01-01T00:00:00Z",
+            ),
             origin_source(),
         ],
     );
@@ -214,59 +232,117 @@ enum MaliciousMode {
     WrongNonce,
 }
 
-fn malicious_peer(mode: MaliciousMode, captured: Arc<Mutex<String>>) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind malicious peer");
-    let endpoint = format!("peer://{}/p2p/malicious", listener.local_addr().unwrap());
+#[derive(NetworkBehaviour)]
+struct AdversarialBehaviour {
+    request_response:
+        request_response::cbor::Behaviour<Libp2pFragmentRequest, Libp2pFragmentResponse>,
+    ping: ping::Behaviour,
+}
+
+fn malicious_peer(mode: MaliciousMode, captured: Arc<Mutex<String>>) -> (String, String) {
+    let keypair = identity::Keypair::generate_ed25519();
+    let peer_id = PeerId::from(keypair.public());
+    let peer_id_string = peer_id.to_string();
+    let (ready_tx, ready_rx) = mpsc::channel();
     thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept peer request");
-        let mut request_line = String::new();
-        BufReader::new(stream.try_clone().unwrap())
-            .read_line(&mut request_line)
-            .unwrap();
-        *captured.lock().unwrap() = request_line.clone();
-        if matches!(mode, MaliciousMode::Oversized) {
-            stream.write_all(&vec![b'x'; 2 * 1024 * 1024 + 2]).unwrap();
-            stream.write_all(b"\n").unwrap();
-            return;
-        }
-        let request: serde_json::Value = serde_json::from_str(&request_line).unwrap();
-        let bytes = b"evil-fragment";
-        let fragment_index = if matches!(mode, MaliciousMode::WrongIndex) {
-            99
-        } else {
-            0
-        };
-        let sha256 = if matches!(mode, MaliciousMode::WrongHash) {
-            "000000".to_string()
-        } else {
-            sha256_hex(bytes)
-        };
-        let nonce = if matches!(mode, MaliciousMode::WrongNonce) {
-            "replayed-nonce"
-        } else {
-            request["requestNonce"].as_str().unwrap()
-        };
-        let peer_id = if matches!(mode, MaliciousMode::WrongPeerId) {
-            "other-peer"
-        } else {
-            "malicious"
-        };
-        let payload = serde_json::json!({
-            "type": "fragmentResponse",
-            "protocolVersion": 1,
-            "packageId": request["packageId"],
-            "manifestId": request["manifestId"],
-            "fragmentId": request["fragmentId"],
-            "fragmentIndex": fragment_index,
-            "sizeBytes": bytes.len(),
-            "sha256": sha256,
-            "requestNonce": nonce,
-            "peerId": peer_id,
-            "bytesBase64": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes)
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("malicious libp2p runtime");
+        runtime.block_on(async move {
+            let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
+                .with_tokio()
+                .with_tcp(
+                    Default::default(),
+                    noise::Config::new,
+                    yamux::Config::default,
+                )
+                .expect("malicious tcp transport")
+                .with_behaviour(|_| {
+                    let protocols = [(
+                        StreamProtocol::new(FRAGMENT_PROTOCOL),
+                        ProtocolSupport::Full,
+                    )];
+                    AdversarialBehaviour {
+                        request_response: request_response::cbor::Behaviour::new(
+                            protocols,
+                            RequestResponseConfig::default()
+                                .with_request_timeout(Duration::from_secs(5)),
+                        ),
+                        ping: ping::Behaviour::default(),
+                    }
+                })
+                .expect("malicious behaviour")
+                .with_swarm_config(|config| {
+                    config.with_idle_connection_timeout(Duration::from_secs(30))
+                })
+                .build();
+            swarm
+                .listen_on("/ip4/127.0.0.1/tcp/0".parse::<Multiaddr>().unwrap())
+                .expect("malicious listen");
+            loop {
+                match swarm.select_next_some().await {
+                    SwarmEvent::NewListenAddr { address, .. } => {
+                        let endpoint = address
+                            .with_p2p(peer_id)
+                            .map(|addr| addr.to_string())
+                            .unwrap_or_else(|addr| format!("{addr}/p2p/{peer_id}"));
+                        let _ = ready_tx.send(endpoint);
+                    }
+                    SwarmEvent::Behaviour(AdversarialBehaviourEvent::RequestResponse(
+                        RequestResponseEvent::Message {
+                            message:
+                                RequestResponseMessage::Request {
+                                    request, channel, ..
+                                },
+                            ..
+                        },
+                    )) => {
+                        *captured.lock().unwrap() =
+                            serde_json::to_string(&request).unwrap_or_default();
+                        let byte_count =
+                            (request.byte_range_end - request.byte_range_start + 1) as usize;
+                        let mut bytes = vec![b'x'; byte_count];
+                        if matches!(mode, MaliciousMode::Oversized) {
+                            bytes = vec![b'x'; 2 * 1024 * 1024 + 2];
+                        }
+                        let response = Libp2pFragmentResponse {
+                            protocol_version: request.protocol_version,
+                            package_id: request.package_id,
+                            manifest_id: request.manifest_id,
+                            fragment_id: request.fragment_id,
+                            fragment_index: if matches!(mode, MaliciousMode::WrongIndex) {
+                                request.fragment_index + 99
+                            } else {
+                                request.fragment_index
+                            },
+                            size_bytes: bytes.len(),
+                            sha256: if matches!(mode, MaliciousMode::WrongHash) {
+                                "000000".to_string()
+                            } else {
+                                sha256_hex(&bytes)
+                            },
+                            request_nonce: if matches!(mode, MaliciousMode::WrongNonce) {
+                                "replayed-nonce".to_string()
+                            } else {
+                                request.request_nonce
+                            },
+                            bytes,
+                        };
+                        let _ = swarm
+                            .behaviour_mut()
+                            .request_response
+                            .send_response(channel, response);
+                    }
+                    _ => {}
+                }
+            }
         });
-        writeln!(stream, "{payload}").unwrap();
     });
-    endpoint
+    let endpoint = ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("malicious peer endpoint");
+    (endpoint, peer_id_string)
 }
 
 fn manifest(bytes: &[u8]) -> Manifest {
@@ -314,15 +390,13 @@ fn package(manifest: Manifest, sources: Vec<AuthorizedSource>) -> AccessPackage 
     }
 }
 
-fn peer_source(id: &str, endpoint: &str, _peer_id: &str, expires_at: &str) -> AuthorizedSource {
-    let peer_id =
-        libp2p::PeerId::from(libp2p::identity::Keypair::generate_ed25519().public()).to_string();
+fn peer_source(id: &str, endpoint: &str, peer_id: &str, expires_at: &str) -> AuthorizedSource {
     let endpoint = endpoint.split("/p2p/").next().unwrap_or(endpoint);
     AuthorizedSource {
         id: id.to_string(),
         source_type: SourceType::Peer,
         endpoint: format!("{endpoint}/p2p/{peer_id}"),
-        peer_id: Some(peer_id),
+        peer_id: Some(peer_id.to_string()),
         transport: Some("libp2p".to_string()),
         priority: 1,
         expires_at: expires_at.to_string(),

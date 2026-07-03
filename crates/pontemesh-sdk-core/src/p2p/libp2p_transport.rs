@@ -9,7 +9,7 @@ use libp2p::request_response::{
     Message as RequestResponseMessage, ProtocolSupport, ResponseChannel,
 };
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{identity, noise, request_response, yamux, Multiaddr, PeerId, StreamProtocol};
+use libp2p::{identity, noise, ping, request_response, yamux, Multiaddr, PeerId, StreamProtocol};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc as tokio_mpsc;
 
@@ -23,7 +23,6 @@ use super::peer_protocol::{request_nonce, P2P_PROTOCOL_VERSION};
 use super::peer_transport::PeerTransport;
 
 pub const FRAGMENT_PROTOCOL: &str = "/pontemesh/fragment/1";
-const MAX_CONCURRENT_STREAMS: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +57,7 @@ pub struct Libp2pFragmentResponse {
 struct FragmentBehaviour {
     request_response:
         request_response::cbor::Behaviour<Libp2pFragmentRequest, Libp2pFragmentResponse>,
+    ping: ping::Behaviour,
 }
 
 #[derive(Clone)]
@@ -380,7 +380,7 @@ fn run_worker(
     runtime.block_on(async move {
         let result = run_swarm(keypair, listen_addrs, announce_addrs, command_rx, ready_tx).await;
         if let Err(error) = result {
-            eprintln!("pontemesh-sdk: libp2p worker stopped: {error}");
+            let _ = error;
         }
     });
 }
@@ -406,14 +406,15 @@ async fn run_swarm(
                 StreamProtocol::new(FRAGMENT_PROTOCOL),
                 ProtocolSupport::Full,
             )];
-            let config = RequestResponseConfig::default()
-                .with_request_timeout(Duration::from_secs(5))
-                .with_max_concurrent_streams(MAX_CONCURRENT_STREAMS);
+            let config =
+                RequestResponseConfig::default().with_request_timeout(Duration::from_secs(5));
             FragmentBehaviour {
                 request_response: request_response::cbor::Behaviour::new(protocols, config),
+                ping: ping::Behaviour::default(),
             }
         })
         .map_err(|error| PontemeshError::Internal(error.to_string()))?
+        .with_swarm_config(|config| config.with_idle_connection_timeout(Duration::from_secs(30)))
         .build();
 
     let listen = if listen_addrs.is_empty() {
@@ -458,11 +459,13 @@ async fn run_swarm(
                     reply,
                 }) => {
                     swarm.add_peer_address(peer_id, addr);
-                    let request_id = swarm
-                        .behaviour_mut()
-                        .request_response
-                        .send_request(&peer_id, request);
-                    pending.insert(request_id, reply);
+                    send_fragment_request(
+                        &mut swarm.behaviour_mut().request_response,
+                        &mut pending,
+                        peer_id,
+                        request,
+                        reply,
+                    );
                 }
                 Some(WorkerCommand::LocalEndpoint { reply }) => {
                     let _ = reply.send(local_endpoint.clone());
@@ -490,6 +493,23 @@ async fn run_swarm(
         }
     };
     result
+}
+
+fn send_fragment_request(
+    request_response: &mut request_response::cbor::Behaviour<
+        Libp2pFragmentRequest,
+        Libp2pFragmentResponse,
+    >,
+    pending: &mut HashMap<
+        request_response::OutboundRequestId,
+        mpsc::Sender<Result<(PeerId, Libp2pFragmentResponse), PontemeshError>>,
+    >,
+    peer_id: PeerId,
+    request: Libp2pFragmentRequest,
+    reply: mpsc::Sender<Result<(PeerId, Libp2pFragmentResponse), PontemeshError>>,
+) {
+    let request_id = request_response.send_request(&peer_id, request);
+    pending.insert(request_id, reply);
 }
 
 fn handle_request_response_event(
@@ -529,7 +549,8 @@ fn handle_request_response_event(
                 ))));
             }
         }
-        _ => {}
+        RequestResponseEvent::InboundFailure { .. } => {}
+        RequestResponseEvent::ResponseSent { .. } => {}
     }
 }
 

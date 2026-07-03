@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 base64 = "0.22"
 hex = "0.4"
-libp2p = { version = "0.54", features = ["tcp", "dns", "noise", "yamux", "request-response", "cbor", "identify", "ping", "tokio", "macros"] }
+libp2p = { version = "0.54", features = ["tcp", "dns", "tls", "noise", "yamux", "request-response", "cbor", "identify", "ping", "tokio", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
