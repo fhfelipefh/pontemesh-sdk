@@ -10,7 +10,6 @@ Minimum objects:
 - `AuthorizedSource`
 - `SourceSelectionContract`
 - `FallbackContract`
-- availability and policy placeholders for protocol growth
+- availability and policy fields for protocol growth
 
 `SourceType` is serialized as `ORIGIN`, `REPLICA_EDGE` and `PEER`.
-

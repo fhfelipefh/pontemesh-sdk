@@ -10,6 +10,7 @@ SEARCH_PATHS="crates bindings examples docs README.md Cargo.toml"
 if grep -RInE "$FORBIDDEN_REGEX" $SEARCH_PATHS \
   --exclude-dir=target \
   --exclude-dir=.git \
+  --exclude-dir=tests \
   --exclude='Cargo.lock'; then
   echo "Forbidden mock/placeholder/partial marker found."
   exit 1

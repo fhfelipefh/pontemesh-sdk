@@ -1,17 +1,15 @@
 # libp2p Production Transport Plan
 
-`experimental-tcp` remains the local functional transport for SDK mesh simulation. Production P2P requires a secure authenticated transport before the SDK is marked production-ready for hostile networks.
+Production P2P uses libp2p request-response with authenticated encrypted peer channels. Older TCP fixtures are retained only for legacy contract tests and are not the production data-plane.
 
 ## Required Transport
 
 - Use `libp2p`.
-- Use Noise or TLS for encrypted authenticated channels.
+- Use Noise for encrypted authenticated channels.
 - Use cryptographic `PeerId` derived from the peer identity key.
-- Implement a request-response protocol for fragment transfer.
-- Preserve existing frame limits for requests and responses.
+- Implement request-response protocol `/pontemesh/fragment/1` for fragment transfer.
 - Preserve client and server timeouts.
-- Preserve rate limiting and concurrent request limits.
-- Preserve the peer circuit breaker.
+- Validate remote peer identity from the libp2p connection.
 - Never send `packageToken` or `applicationToken` over P2P.
 
 ## Identity And Authorization

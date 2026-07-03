@@ -1,63 +1,54 @@
 # P2P Protocol
 
-The current protocol is `experimental-tcp` v1: newline-delimited JSON over TCP with base64 fragment bytes. It is acceptable for local SDK mesh simulation and transport contract validation, but less efficient than binary framing and not the final secure transport.
+The current production P2P protocol is libp2p request-response over authenticated encrypted channels. The SDK uses a real libp2p `PeerId`, Noise secure channel, Yamux multiplexing, and CBOR-framed fragment requests on `/pontemesh/fragment/1`.
 
 ```text
 P2P funcional local: pronto
-P2P seguro de produção: parcial
+P2P seguro de produção: pronto
 ```
 
 Endpoints use:
 
 ```text
-peer://127.0.0.1:4001/p2p/<peerId>
+/ip4/127.0.0.1/tcp/4001/p2p/<peerId>
 ```
 
-The SDK also accepts future Origin contracts with explicit `authorizedSources[].peerId`.
+Origin must authorize peers with `authorizedSources[].peerId`, `transport=libp2p`, and a libp2p multiaddr endpoint containing `/p2p/<PeerId>`.
 
 ## Request
 
-```json
-{
-  "type": "fragmentRequest",
-  "protocolVersion": 1,
-  "packageId": "pkg_...",
-  "manifestId": "manifest_...",
-  "bucket": "game-assets",
-  "key": "maps/desert-v3.pak",
-  "fragmentId": "fragment_...",
-  "fragmentIndex": 0,
-  "byteRangeStart": 0,
-  "byteRangeEnd": 1048575,
-  "requestNonce": "..."
-}
-```
+CBOR payload:
+
+- `protocolVersion`
+- `packageId`
+- `bucket`
+- `key`
+- `manifestId`
+- `fragmentId`
+- `fragmentIndex`
+- `byteRangeStart`
+- `byteRangeEnd`
+- `requestNonce`
 
 ## Response
 
-```json
-{
-  "type": "fragmentResponse",
-  "protocolVersion": 1,
-  "packageId": "pkg_...",
-  "manifestId": "manifest_...",
-  "fragmentId": "fragment_...",
-  "fragmentIndex": 0,
-  "sizeBytes": 1048576,
-  "sha256": "...",
-  "requestNonce": "...",
-  "peerId": "peer_...",
-  "bytesBase64": "..."
-}
-```
+CBOR payload:
+
+- `protocolVersion`
+- `packageId`
+- `manifestId`
+- `fragmentId`
+- `fragmentIndex`
+- `sizeBytes`
+- `sha256`
+- `requestNonce`
+- `bytes`
 
 ## Limits
 
-- Max request frame: 16 KiB.
-- Max response frame: 2 MiB.
 - Request timeout: 5 seconds.
-- Concurrent server requests: 32.
-- Circuit breaker opens after repeated peer failures.
+- libp2p idle connection timeout: 30 seconds.
+- Origin and Replica/Edge fallback remains available.
 
 ## Validation
 
@@ -73,8 +64,9 @@ Before accepting, the downloader checks:
 
 - Source is authorized by Origin.
 - `sourceType=PEER`.
+- `transport=libp2p`.
 - Source is not expired.
-- Endpoint/peer id matches the authorized source when available.
+- Authenticated remote `PeerId` from the libp2p connection matches the authorized source.
 - Protocol version and nonce match.
 - Fragment metadata, size, and SHA-256 match the manifest.
 

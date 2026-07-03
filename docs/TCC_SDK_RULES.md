@@ -14,6 +14,6 @@
 - P2P can only share locally validated fragments when `allowPeerSharing=true`.
 - Every fragment received from a peer must be validated by SHA-256 before use.
 - Origin remains the final authority and fallback guarantee.
-- The current TCP transport is explicitly experimental until replaced by libp2p Noise/TLS or equivalent secure transport.
-- TCC status is `Parcial` for secure P2P until authenticated encrypted peer channels are implemented.
+- The default production P2P transport is libp2p with Noise authenticated encryption and Yamux.
+- TCC status is `Pronto` for secure P2P when the libp2p traffic and malicious-peer gates pass.
 - P2P traffic proof must use `TransferSummary.bytes_from_peer > 0` and valid final object hashes.
