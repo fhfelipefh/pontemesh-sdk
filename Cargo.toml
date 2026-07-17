@@ -2,6 +2,7 @@
 members = [
   "crates/pontemesh-sdk-core",
   "bindings/c",
+  "tools/live-client",
   "tools/p2p-bench"
 ]
 resolver = "2"

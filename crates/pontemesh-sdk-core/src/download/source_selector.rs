@@ -54,9 +54,10 @@ impl<'a> SourceSelector<'a> {
         if is_expired_utc(&source.expires_at) {
             return false;
         }
-        if !source
-            .available_fragments
-            .contains(&(fragment_index as i64))
+        if source_type != SourceType::Origin
+            && !source
+                .available_fragments
+                .contains(&(fragment_index as i64))
         {
             return false;
         }

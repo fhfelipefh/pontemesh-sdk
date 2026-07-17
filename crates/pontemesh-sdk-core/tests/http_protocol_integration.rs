@@ -154,9 +154,11 @@ fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
             .count(),
         2
     );
-    assert_event(&requests, "ACCESS_PACKAGE_CREATED");
     assert_event(&requests, "FRAGMENT_VALIDATED");
-    assert_event(&requests, "OBJECT_SYNCED");
+    assert_event_field(&requests, r#""fragmentIndex":0"#);
+    assert_event_field(&requests, r#""fragmentHash":"#);
+    assert_event_field(&requests, r#""bytesTransferred":"#);
+    assert_event_field(&requests, r#""outcome":"SUCCESS""#);
     assert_all_targets_hide_package_token(&requests);
     assert_authorization_seen(
         &requests,
@@ -232,7 +234,7 @@ fn sdk_falls_back_from_replica_to_origin_and_records_source_failure() {
             .count(),
         2
     );
-    assert_event(&requests, "SOURCE_FAILED");
+    assert_event(&requests, "SOURCE_FAILURE");
     assert_event(&requests, "FRAGMENT_VALIDATED");
     assert_all_targets_hide_package_token(&requests);
 }
@@ -544,6 +546,19 @@ fn assert_event(requests: &[LoggedRequest], event_type: &str) {
                 && request.body.contains(event_type)
         }),
         "missing SDK event {event_type}"
+    );
+}
+
+fn assert_event_field(requests: &[LoggedRequest], field: &str) {
+    assert!(
+        requests.iter().any(|request| {
+            request.method == "POST"
+                && request
+                    .target
+                    .starts_with("/pontemesh/access-packages/pkg-1/events/")
+                && request.body.contains(field)
+        }),
+        "missing SDK event field {field}"
     );
 }
 

@@ -1,0 +1,9 @@
+[package]
+name = "pontemesh-live-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pontemesh-sdk-core = { path = "../../crates/pontemesh-sdk-core", version = "0.1.0" }
+serde_json = "1"

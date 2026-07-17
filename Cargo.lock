@@ -2048,6 +2048,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pontemesh-live-client"
+version = "0.1.0"
+dependencies = [
+ "pontemesh-sdk-core",
+ "serde_json",
+]
+
+[[package]]
 name = "pontemesh-sdk-c"
 version = "0.1.0"
 dependencies = [

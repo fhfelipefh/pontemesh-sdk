@@ -148,6 +148,21 @@ fn source_selector_prefers_peer_replica_then_origin() {
 }
 
 #[test]
+fn source_selector_allows_origin_with_empty_fragment_list() {
+    let bytes = b"hello";
+    let manifest = manifest(bytes);
+    let peer = DisabledPeerTransport;
+    let mut origin = source("origin", SourceType::Origin, 1);
+    origin.available_fragments.clear();
+    let sources = vec![origin];
+    let selection = SourceSelectionContract::default();
+    let selector = SourceSelector::new(&sources, &selection, &peer);
+    let ordered = selector.sources_for(&manifest.fragments[0]);
+
+    assert_eq!(order_sources_for_test(&ordered), vec![SourceType::Origin]);
+}
+
+#[test]
 fn valid_fragment_sha256_is_accepted_and_invalid_is_rejected() {
     let descriptor = fragment(0, b"hello");
     validate_fragment(&descriptor, b"hello").expect("valid fragment");

@@ -49,7 +49,9 @@ pub fn is_expired_utc(expires_at: &str) -> bool {
 }
 
 fn parse_utc_seconds(value: &str) -> Option<i64> {
-    let value = value.strip_suffix('Z')?;
+    let value = value
+        .strip_suffix('Z')
+        .or_else(|| value.strip_suffix("+00:00"))?;
     let (date, time) = value.split_once('T')?;
     let mut date_parts = date.split('-');
     let year: i32 = date_parts.next()?.parse().ok()?;
@@ -58,7 +60,8 @@ fn parse_utc_seconds(value: &str) -> Option<i64> {
     let mut time_parts = time.split(':');
     let hour: u32 = time_parts.next()?.parse().ok()?;
     let minute: u32 = time_parts.next()?.parse().ok()?;
-    let second: u32 = time_parts.next()?.parse().ok()?;
+    let second_text = time_parts.next()?;
+    let second: u32 = second_text.split('.').next()?.parse().ok()?;
     if !(1..=12).contains(&month)
         || !(1..=31).contains(&day)
         || hour > 23
@@ -104,4 +107,19 @@ fn default_failure_threshold() -> i64 {
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_utc_seconds;
+
+    #[test]
+    fn parses_server_utc_timestamps() {
+        let expected = parse_utc_seconds("2026-07-17T15:31:04Z").expect("z timestamp");
+
+        assert_eq!(
+            parse_utc_seconds("2026-07-17T15:31:04.105528+00:00"),
+            Some(expected)
+        );
+    }
 }

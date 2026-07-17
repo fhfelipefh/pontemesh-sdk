@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::contracts::{AccessPackage, CreateAccessPackageRequest, Manifest};
+use crate::contracts::{AccessPackage, CreateAccessPackageRequest, Manifest, SourceType};
 use crate::errors::PontemeshError;
 use crate::p2p::PeerAnnouncement;
 
@@ -69,6 +69,23 @@ impl HttpOriginClient {
     fn url(&self, path: &str) -> String {
         format!("{}/{}", self.origin_url, path.trim_start_matches('/'))
     }
+
+    fn normalize_origin_sources(&self, package: &mut AccessPackage) {
+        let endpoint = self.url(&format!(
+            "/pontemesh/access-packages/{}/objects/{}/{}",
+            url_component(&package.id),
+            url_component(&package.bucket),
+            object_path(&package.key)
+        ));
+        for source in &mut package.authorized_sources {
+            if source.source_type == SourceType::Origin {
+                source.endpoint.clone_from(&endpoint);
+            }
+        }
+        if package.fallback.source_type == "ORIGIN" {
+            package.fallback.object_endpoint = endpoint;
+        }
+    }
 }
 
 impl OriginClient for HttpOriginClient {
@@ -91,21 +108,31 @@ impl OriginClient for HttpOriginClient {
         if response.status() == reqwest::StatusCode::FORBIDDEN
             || response.status() == reqwest::StatusCode::UNAUTHORIZED
         {
-            return Err(PontemeshError::AccessDenied(response.status().to_string()));
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(PontemeshError::AccessDenied(format_http_error(
+                status.as_u16(),
+                &body,
+            )));
         }
         if !response.status().is_success() {
-            return Err(PontemeshError::OriginRequestFailed(
-                response.status().to_string(),
-            ));
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(PontemeshError::OriginRequestFailed(format_http_error(
+                status.as_u16(),
+                &body,
+            )));
         }
-        response
+        let mut package: AccessPackage = response
             .json()
-            .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))
+            .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
+        self.normalize_origin_sources(&mut package);
+        Ok(package)
     }
 
     fn get_manifest(&self, bucket: &str, key: &str) -> Result<Manifest, PontemeshError> {
-        let bucket = urlencoding::encode(bucket);
-        let key = urlencoding::encode(key);
+        let bucket = url_component(bucket);
+        let key = object_path(key);
         let response = self
             .http
             .get(self.url(&format!("/pontemesh/objects/{bucket}/manifest/{key}")))
@@ -113,9 +140,12 @@ impl OriginClient for HttpOriginClient {
             .send()
             .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
         if !response.status().is_success() {
-            return Err(PontemeshError::OriginRequestFailed(
-                response.status().to_string(),
-            ));
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(PontemeshError::OriginRequestFailed(format_http_error(
+                status.as_u16(),
+                &body,
+            )));
         }
         response
             .json()
@@ -132,9 +162,33 @@ impl OriginClient for HttpOriginClient {
         fragment_index: Option<usize>,
         source_type: Option<&str>,
     ) -> Result<(), PontemeshError> {
-        let package_id = urlencoding::encode(package_id);
-        let bucket = urlencoding::encode(bucket);
-        let key = urlencoding::encode(key);
+        let Some(fragment_index) = fragment_index else {
+            return Ok(());
+        };
+        let manifest = self.get_manifest(bucket, key)?;
+        let fragment = manifest
+            .fragments
+            .iter()
+            .find(|fragment| fragment.index == fragment_index)
+            .ok_or_else(|| {
+                PontemeshError::OriginRequestFailed(format!(
+                    "fragment {fragment_index} not found in manifest"
+                ))
+            })?;
+        let source_type = source_type.unwrap_or("ORIGIN");
+        if source_type == "PEER" {
+            return Ok(());
+        }
+        let (event_type, outcome) = match event_type {
+            "FRAGMENT_VALIDATED" => ("FRAGMENT_VALIDATED", "SUCCESS"),
+            "SOURCE_FAILED" | "SOURCE_FAILURE" => ("SOURCE_FAILURE", "FAILURE"),
+            "FRAGMENT_REJECTED" => ("FRAGMENT_REJECTED", "REJECTED"),
+            "FALLBACK_DECISION" => ("FALLBACK_DECISION", "SUCCESS"),
+            _ => return Ok(()),
+        };
+        let package_id = url_component(package_id);
+        let bucket = url_component(bucket);
+        let key = object_path(key);
         let response = self
             .http
             .post(self.url(&format!(
@@ -142,16 +196,22 @@ impl OriginClient for HttpOriginClient {
             )))
             .bearer_auth(package_token)
             .json(&json!({
-                "eventType": event_type,
-                "fragmentIndex": fragment_index,
                 "sourceType": source_type,
+                "fragmentHash": fragment.sha256,
+                "eventType": event_type,
+                "fragmentIndex": fragment.index,
+                "bytesTransferred": fragment.size_bytes,
+                "outcome": outcome,
             }))
             .send()
             .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
         if !response.status().is_success() {
-            return Err(PontemeshError::OriginRequestFailed(
-                response.status().to_string(),
-            ));
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(PontemeshError::OriginRequestFailed(format_http_error(
+                status.as_u16(),
+                &body,
+            )));
         }
         Ok(())
     }
@@ -162,9 +222,9 @@ impl OriginClient for HttpOriginClient {
         endpoint: &str,
         available_fragments: &[usize],
     ) -> Result<(), PontemeshError> {
-        let package_id = urlencoding::encode(&package.id);
-        let bucket = urlencoding::encode(&package.bucket);
-        let key = urlencoding::encode(&package.key);
+        let package_id = url_component(&package.id);
+        let bucket = url_component(&package.bucket);
+        let key = object_path(&package.key);
         let response = self
             .http
             .post(self.url(&format!(
@@ -178,10 +238,56 @@ impl OriginClient for HttpOriginClient {
             .send()
             .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
         if !response.status().is_success() {
-            return Err(PontemeshError::OriginRequestFailed(
-                response.status().to_string(),
-            ));
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(PontemeshError::OriginRequestFailed(format_http_error(
+                status.as_u16(),
+                &body,
+            )));
         }
         Ok(())
+    }
+}
+
+fn object_path(value: &str) -> String {
+    value
+        .split('/')
+        .map(url_component)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn url_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn format_http_error(status: u16, body: &str) -> String {
+    let body = body.trim();
+    if body.is_empty() {
+        status.to_string()
+    } else {
+        format!("{status}: {body}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_path_preserves_segments_and_encodes_components() {
+        assert_eq!(
+            object_path("objects/full stack/agent.bin"),
+            "objects/full%20stack/agent.bin"
+        );
     }
 }

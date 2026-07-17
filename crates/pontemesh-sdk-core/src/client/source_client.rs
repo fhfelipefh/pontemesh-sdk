@@ -48,15 +48,26 @@ impl SourceClient for HttpSourceClient {
         if !response.status().is_success()
             && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
         {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
             return Err(source_error(
                 source.source_type,
-                response.status().to_string(),
+                format_http_error(status.as_u16(), &body),
             ));
         }
         response
             .bytes()
             .map(|bytes| bytes.to_vec())
             .map_err(|error| source_error(source.source_type, error.to_string()))
+    }
+}
+
+fn format_http_error(status: u16, body: &str) -> String {
+    let body = body.trim();
+    if body.is_empty() {
+        status.to_string()
+    } else {
+        format!("{status}: {body}")
     }
 }
 
