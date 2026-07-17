@@ -9,9 +9,17 @@ fn main() -> Result<(), pontemesh_sdk_core::PontemeshError> {
         p2p: P2pConfig::default(),
     })?;
 
-    client.sync_object(SyncObjectRequest {
+    let result = client.sync_object_with_summary(SyncObjectRequest {
         bucket: "game-assets".to_string(),
         key: "maps/desert-v3.pak".to_string(),
         destination: "./Game/Content/maps/desert-v3.pak".into(),
-    })
+    })?;
+
+    println!(
+        "downloaded via peer={}, replica={}, origin={}",
+        result.summary.bytes_from_peer,
+        result.summary.bytes_from_replica,
+        result.summary.bytes_from_origin
+    );
+    Ok(())
 }

@@ -36,6 +36,19 @@ typedef void (*PontemeshProgressCallback)(
     void* user_data
 );
 
+typedef struct PontemeshTransferSummary {
+    uint64_t bytes_from_peer;
+    uint64_t bytes_from_replica;
+    uint64_t bytes_from_origin;
+    uint64_t fragments_from_peer;
+    uint64_t fragments_from_replica;
+    uint64_t fragments_from_origin;
+    uint64_t peer_failures;
+    uint64_t peer_hash_failures;
+    uint64_t peer_rejected_fragments;
+    uint64_t fallback_activations;
+} PontemeshTransferSummary;
+
 PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_create(
     const char* origin_url,
     const char* application_token,
@@ -59,6 +72,24 @@ PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_sync_object_with_progress(
     const char* bucket,
     const char* key,
     const char* destination,
+    PontemeshProgressCallback callback,
+    void* user_data
+);
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_sync_object_with_summary(
+    PontemeshClient* client,
+    const char* bucket,
+    const char* key,
+    const char* destination,
+    PontemeshTransferSummary* out_summary
+);
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_sync_object_with_summary_and_progress(
+    PontemeshClient* client,
+    const char* bucket,
+    const char* key,
+    const char* destination,
+    PontemeshTransferSummary* out_summary,
     PontemeshProgressCallback callback,
     void* user_data
 );

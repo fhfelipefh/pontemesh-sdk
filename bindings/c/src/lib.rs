@@ -4,7 +4,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::ptr;
 
-use pontemesh_sdk_core::{p2p::P2pConfig, ErrorCode, PontemeshClientConfig, SyncObjectRequest};
+use pontemesh_sdk_core::{
+    p2p::P2pConfig, ErrorCode, PontemeshClientConfig, SyncObjectRequest, TransferSummary,
+};
 
 pub struct PontemeshClient {
     inner: pontemesh_sdk_core::PontemeshClient,
@@ -34,6 +36,21 @@ pub type PontemeshProgressCallback = Option<
         user_data: *mut c_void,
     ),
 >;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PontemeshTransferSummary {
+    pub bytes_from_peer: u64,
+    pub bytes_from_replica: u64,
+    pub bytes_from_origin: u64,
+    pub fragments_from_peer: u64,
+    pub fragments_from_replica: u64,
+    pub fragments_from_origin: u64,
+    pub peer_failures: u64,
+    pub peer_hash_failures: u64,
+    pub peer_rejected_fragments: u64,
+    pub fallback_activations: u64,
+}
 
 #[no_mangle]
 /// # Safety
@@ -147,11 +164,66 @@ pub unsafe extern "C" fn pontemesh_client_sync_object_with_progress(
     callback: PontemeshProgressCallback,
     user_data: *mut c_void,
 ) -> PontemeshStatus {
+    pontemesh_client_sync_object_with_summary_and_progress(
+        client,
+        bucket,
+        key,
+        destination,
+        ptr::null_mut(),
+        callback,
+        user_data,
+    )
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+/// `bucket`, `key`, and `destination` must be valid null-terminated UTF-8 C strings.
+/// `out_summary` must be null or a valid writable pointer.
+pub unsafe extern "C" fn pontemesh_client_sync_object_with_summary(
+    client: *mut PontemeshClient,
+    bucket: *const c_char,
+    key: *const c_char,
+    destination: *const c_char,
+    out_summary: *mut PontemeshTransferSummary,
+) -> PontemeshStatus {
+    pontemesh_client_sync_object_with_summary_and_progress(
+        client,
+        bucket,
+        key,
+        destination,
+        out_summary,
+        None,
+        ptr::null_mut(),
+    )
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+/// `bucket`, `key`, and `destination` must be valid null-terminated UTF-8 C strings.
+/// `out_summary` must be null or a valid writable pointer.
+/// If provided, `callback` must remain valid for the duration of the call and must tolerate
+/// `user_data` being passed back unchanged.
+pub unsafe extern "C" fn pontemesh_client_sync_object_with_summary_and_progress(
+    client: *mut PontemeshClient,
+    bucket: *const c_char,
+    key: *const c_char,
+    destination: *const c_char,
+    out_summary: *mut PontemeshTransferSummary,
+    callback: PontemeshProgressCallback,
+    user_data: *mut c_void,
+) -> PontemeshStatus {
     ffi_boundary(|| {
         let client = match client.as_mut() {
             Some(client) => client,
             None => return PontemeshStatus::PontemeshInvalidArgument,
         };
+        if !out_summary.is_null() {
+            *out_summary = PontemeshTransferSummary::default();
+        }
         let bucket = match read_string(bucket) {
             Ok(value) => value,
             Err(status) => return set_error(client, "bucket is invalid", status),
@@ -184,12 +256,15 @@ pub unsafe extern "C" fn pontemesh_client_sync_object_with_progress(
                 };
             client
                 .inner
-                .sync_object_with_progress(request, Some(&mut progress))
+                .sync_object_with_summary_and_progress(request, Some(&mut progress))
         } else {
-            client.inner.sync_object(request)
+            client.inner.sync_object_with_summary(request)
         };
         match result {
-            Ok(()) => {
+            Ok(result) => {
+                if !out_summary.is_null() {
+                    *out_summary = result.summary.into();
+                }
                 client.last_error = None;
                 PontemeshStatus::PontemeshOk
             }
@@ -275,6 +350,23 @@ fn status_from_code(code: ErrorCode) -> PontemeshStatus {
     }
 }
 
+impl From<TransferSummary> for PontemeshTransferSummary {
+    fn from(summary: TransferSummary) -> Self {
+        Self {
+            bytes_from_peer: summary.bytes_from_peer,
+            bytes_from_replica: summary.bytes_from_replica,
+            bytes_from_origin: summary.bytes_from_origin,
+            fragments_from_peer: summary.fragments_from_peer,
+            fragments_from_replica: summary.fragments_from_replica,
+            fragments_from_origin: summary.fragments_from_origin,
+            peer_failures: summary.peer_failures,
+            peer_hash_failures: summary.peer_hash_failures,
+            peer_rejected_fragments: summary.peer_rejected_fragments,
+            fallback_activations: summary.fallback_activations,
+        }
+    }
+}
+
 fn ffi_boundary(callback: impl FnOnce() -> PontemeshStatus) -> PontemeshStatus {
     catch_unwind(AssertUnwindSafe(callback)).unwrap_or(PontemeshStatus::PontemeshInternalError)
 }
@@ -291,5 +383,34 @@ mod tests {
         assert_eq!(status, PontemeshStatus::PontemeshInvalidArgument);
         assert!(client.is_null());
         unsafe { pontemesh_client_free(client) };
+    }
+
+    #[test]
+    fn transfer_summary_maps_all_public_abi_fields() {
+        let summary = TransferSummary {
+            bytes_from_peer: 11,
+            bytes_from_replica: 22,
+            bytes_from_origin: 33,
+            fragments_from_peer: 1,
+            fragments_from_replica: 2,
+            fragments_from_origin: 3,
+            peer_failures: 4,
+            peer_hash_failures: 5,
+            peer_rejected_fragments: 6,
+            fallback_activations: 7,
+        };
+
+        let mapped = PontemeshTransferSummary::from(summary);
+
+        assert_eq!(mapped.bytes_from_peer, 11);
+        assert_eq!(mapped.bytes_from_replica, 22);
+        assert_eq!(mapped.bytes_from_origin, 33);
+        assert_eq!(mapped.fragments_from_peer, 1);
+        assert_eq!(mapped.fragments_from_replica, 2);
+        assert_eq!(mapped.fragments_from_origin, 3);
+        assert_eq!(mapped.peer_failures, 4);
+        assert_eq!(mapped.peer_hash_failures, 5);
+        assert_eq!(mapped.peer_rejected_fragments, 6);
+        assert_eq!(mapped.fallback_activations, 7);
     }
 }

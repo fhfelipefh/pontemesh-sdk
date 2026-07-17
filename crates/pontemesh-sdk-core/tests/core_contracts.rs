@@ -176,6 +176,19 @@ impl OriginClient for FakeOrigin {
         Ok(self.package.manifest.clone())
     }
 
+    fn record_event(
+        &self,
+        _package_id: &str,
+        _package_token: &str,
+        _bucket: &str,
+        _key: &str,
+        _event_type: &str,
+        _fragment_index: Option<usize>,
+        _source_type: Option<&str>,
+    ) -> Result<(), PontemeshError> {
+        Ok(())
+    }
+
     fn announce_peer_availability(
         &self,
         _package: &AccessPackage,

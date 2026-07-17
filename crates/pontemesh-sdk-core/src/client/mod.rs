@@ -6,7 +6,9 @@ pub use source_client::{HttpSourceClient, SourceClient};
 
 use std::fs;
 
-use crate::download::{sync_object, ProgressCallback, SyncObjectRequest};
+use crate::download::{
+    sync_object_with_summary, ProgressCallback, SyncObjectRequest, SyncObjectResult,
+};
 use crate::errors::PontemeshError;
 use crate::p2p::{DisabledPeerTransport, Libp2pTransport, P2pTransportKind, PeerTransport};
 use crate::storage::MemoryStorage;
@@ -79,8 +81,24 @@ impl PontemeshClient {
         request: SyncObjectRequest,
         progress: Option<ProgressCallback<'_>>,
     ) -> Result<(), PontemeshError> {
+        self.sync_object_with_summary_and_progress(request, progress)
+            .map(|_| ())
+    }
+
+    pub fn sync_object_with_summary(
+        &self,
+        request: SyncObjectRequest,
+    ) -> Result<SyncObjectResult, PontemeshError> {
+        self.sync_object_with_summary_and_progress(request, None)
+    }
+
+    pub fn sync_object_with_summary_and_progress(
+        &self,
+        request: SyncObjectRequest,
+        progress: Option<ProgressCallback<'_>>,
+    ) -> Result<SyncObjectResult, PontemeshError> {
         let mut storage = MemoryStorage::new();
-        let bytes = sync_object(
+        let result = sync_object_with_summary(
             self.origin.as_ref(),
             self.source.as_ref(),
             self.peer.as_ref(),
@@ -91,7 +109,7 @@ impl PontemeshClient {
         if let Some(parent) = request.destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&request.destination, bytes)?;
-        Ok(())
+        fs::write(&request.destination, &result.bytes)?;
+        Ok(result)
     }
 }

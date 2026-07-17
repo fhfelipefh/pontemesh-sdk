@@ -25,11 +25,17 @@ let client = PontemeshClient::new(PontemeshClientConfig {
     p2p: P2pConfig::default(),
 })?;
 
-client.sync_object(SyncObjectRequest {
+let result = client.sync_object_with_summary(SyncObjectRequest {
     bucket: "game-assets".to_string(),
     key: "maps/desert-v3.pak".to_string(),
     destination: "./Game/Content/maps/desert-v3.pak".into(),
 })?;
+println!(
+    "downloaded via peer={}, replica={}, origin={}",
+    result.summary.bytes_from_peer,
+    result.summary.bytes_from_replica,
+    result.summary.bytes_from_origin
+);
 # Ok::<(), pontemesh_sdk_core::PontemeshError>(())
 ```
 
@@ -45,3 +51,15 @@ cargo build -p pontemesh-sdk-c --release
 ./scripts/tcc-libp2p-gate.sh
 ./scripts/production-no-mock-gate.sh
 ```
+
+Run the SDK against a live Ponte Mesh server with:
+
+```bash
+PONTEMESH_LIVE_ORIGIN_URL=http://127.0.0.1:8080 \
+PONTEMESH_LIVE_APPLICATION_TOKEN=pm_app_... \
+PONTEMESH_LIVE_BUCKET=game-assets \
+PONTEMESH_LIVE_KEY=maps/desert-v3.pak \
+./scripts/sdk-server-integration-gate.sh
+```
+
+`PONTEMESH_LIVE_EXPECTED_SHA256` is optional and, when set, is checked against the downloaded object.

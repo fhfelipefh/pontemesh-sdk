@@ -98,8 +98,8 @@ fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
     .expect("create SDK client");
     let mut progress = Vec::new();
 
-    client
-        .sync_object_with_progress(
+    let result = client
+        .sync_object_with_summary_and_progress(
             SyncObjectRequest {
                 bucket: "game-assets".to_string(),
                 key: "maps/desert-v3.pak".to_string(),
@@ -126,6 +126,14 @@ fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
     assert!(progress
         .iter()
         .all(|(_, _, _, source_type)| source_type == "REPLICA_EDGE"));
+    assert_eq!(
+        result.summary.bytes_from_replica,
+        object_bytes().len() as u64
+    );
+    assert_eq!(result.summary.fragments_from_replica, 2);
+    assert_eq!(result.summary.bytes_from_origin, 0);
+    assert_eq!(result.summary.fragments_from_origin, 0);
+    assert_eq!(result.summary.fallback_activations, 0);
 
     let requests = server.requests();
     assert!(requests
@@ -177,8 +185,8 @@ fn sdk_falls_back_from_replica_to_origin_and_records_source_failure() {
     .expect("create SDK client");
     let mut progress_sources = Vec::new();
 
-    client
-        .sync_object_with_progress(
+    let result = client
+        .sync_object_with_summary_and_progress(
             SyncObjectRequest {
                 bucket: "game-assets".to_string(),
                 key: "maps/desert-v3.pak".to_string(),
@@ -195,6 +203,14 @@ fn sdk_falls_back_from_replica_to_origin_and_records_source_failure() {
         object_bytes()
     );
     assert!(progress_sources.iter().all(|source| source == "ORIGIN"));
+    assert_eq!(
+        result.summary.bytes_from_origin,
+        object_bytes().len() as u64
+    );
+    assert_eq!(result.summary.fragments_from_origin, 2);
+    assert_eq!(result.summary.bytes_from_replica, 0);
+    assert_eq!(result.summary.fragments_from_replica, 0);
+    assert_eq!(result.summary.fallback_activations, 2);
     let requests = server.requests();
     assert_eq!(
         requests

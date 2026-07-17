@@ -31,25 +31,21 @@ pub trait OriginClient: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     fn record_event(
         &self,
-        _package_id: &str,
-        _package_token: &str,
-        _bucket: &str,
-        _key: &str,
-        _event_type: &str,
-        _fragment_index: Option<usize>,
-        _source_type: Option<&str>,
-    ) -> Result<(), PontemeshError> {
-        Ok(())
-    }
+        package_id: &str,
+        package_token: &str,
+        bucket: &str,
+        key: &str,
+        event_type: &str,
+        fragment_index: Option<usize>,
+        source_type: Option<&str>,
+    ) -> Result<(), PontemeshError>;
 
     fn announce_peer_availability(
         &self,
-        _package: &AccessPackage,
-        _endpoint: &str,
-        _available_fragments: &[usize],
-    ) -> Result<(), PontemeshError> {
-        Ok(())
-    }
+        package: &AccessPackage,
+        endpoint: &str,
+        available_fragments: &[usize],
+    ) -> Result<(), PontemeshError>;
 }
 
 pub struct HttpOriginClient {

@@ -9,15 +9,16 @@ int main(void) {
     );
 
     if (status == PONTEMESH_OK) {
-        status = pontemesh_client_sync_object(
+        PontemeshTransferSummary summary;
+        status = pontemesh_client_sync_object_with_summary(
             client,
             "game-assets",
             "maps/desert-v3.pak",
-            "./Game/Content/maps/desert-v3.pak"
+            "./Game/Content/maps/desert-v3.pak",
+            &summary
         );
     }
 
     pontemesh_client_free(client);
     return status == PONTEMESH_OK ? 0 : 1;
 }
-

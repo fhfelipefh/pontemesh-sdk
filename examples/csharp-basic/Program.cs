@@ -1,3 +1,4 @@
+using System;
 using PonteMesh;
 
 using var client = new PontemeshClient(
@@ -5,9 +6,12 @@ using var client = new PontemeshClient(
     "application-token"
 );
 
-client.SyncObject(
+var summary = client.SyncObjectWithSummary(
     "game-assets",
     "maps/desert-v3.pak",
     "./Game/Content/maps/desert-v3.pak"
 );
 
+Console.WriteLine(
+    $"downloaded via peer={summary.BytesFromPeer}, replica={summary.BytesFromReplica}, origin={summary.BytesFromOrigin}"
+);
