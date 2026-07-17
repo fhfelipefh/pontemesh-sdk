@@ -252,9 +252,19 @@ impl OriginClient for HttpOriginClient {
 fn object_path(value: &str) -> String {
     value
         .split('/')
-        .map(url_component)
+        .map(url_path_segment)
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn url_path_segment(value: &str) -> String {
+    if value == "." {
+        "%2E".to_string()
+    } else if value == ".." {
+        "%2E%2E".to_string()
+    } else {
+        url_component(value)
+    }
 }
 
 fn url_component(value: &str) -> String {
@@ -288,6 +298,14 @@ mod tests {
         assert_eq!(
             object_path("objects/full stack/agent.bin"),
             "objects/full%20stack/agent.bin"
+        );
+    }
+
+    #[test]
+    fn object_path_neutralizes_dot_segments() {
+        assert_eq!(
+            object_path("../admin/./secret token"),
+            "%2E%2E/admin/%2E/secret%20token"
         );
     }
 }

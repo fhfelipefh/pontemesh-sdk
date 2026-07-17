@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::client::{OriginClient, SourceClient};
-use crate::contracts::{AuthorizedSource, SourceType};
+use crate::contracts::{AccessPackage, AuthorizedSource, Manifest, SourceType};
 use crate::errors::PontemeshError;
 use crate::integrity::{sha256_hex, validate_fragment};
 use crate::p2p::PeerTransport;
@@ -137,6 +137,7 @@ pub fn sync_object_with_summary_and_observer(
     let manifest = origin
         .get_manifest(&request.bucket, &request.key)
         .unwrap_or_else(|_| package.manifest.clone());
+    validate_manifest_contract(&package, &manifest)?;
     let selector =
         SourceSelector::new(&package.authorized_sources, &package.source_selection, peer);
     let mut progress_map = ProgressMap::default();
@@ -353,4 +354,72 @@ fn elapsed_ms_ceil(started: Instant) -> u128 {
     } else {
         nanos.div_ceil(1_000_000)
     }
+}
+
+fn validate_manifest_contract(
+    package: &AccessPackage,
+    manifest: &Manifest,
+) -> Result<(), PontemeshError> {
+    if manifest.manifest_id != package.manifest_id
+        || manifest.bucket != package.bucket
+        || manifest.key != package.key
+        || manifest.version != package.version
+    {
+        return Err(PontemeshError::AccessDenied(
+            "manifest does not match access package".to_string(),
+        ));
+    }
+    if !manifest
+        .object_hash_algorithm
+        .eq_ignore_ascii_case("SHA256")
+    {
+        return Err(PontemeshError::InvalidArgument(
+            "manifest object hash algorithm must be SHA256".to_string(),
+        ));
+    }
+    if manifest.total_size_bytes < 0 {
+        return Err(PontemeshError::InvalidArgument(
+            "manifest total size must be non-negative".to_string(),
+        ));
+    }
+    let mut fragments = manifest.fragments.clone();
+    fragments.sort_by_key(|fragment| fragment.index);
+    let mut next_offset = 0_u64;
+    let mut last_index = None;
+    for fragment in fragments {
+        if last_index == Some(fragment.index) {
+            return Err(PontemeshError::InvalidArgument(
+                "manifest contains duplicate fragment index".to_string(),
+            ));
+        }
+        last_index = Some(fragment.index);
+        if !fragment.hash_algorithm.eq_ignore_ascii_case("SHA256") {
+            return Err(PontemeshError::InvalidArgument(
+                "fragment hash algorithm must be SHA256".to_string(),
+            ));
+        }
+        if fragment.byte_range_start != next_offset {
+            return Err(PontemeshError::InvalidArgument(
+                "manifest fragment ranges must be contiguous".to_string(),
+            ));
+        }
+        if fragment.byte_range_end < fragment.byte_range_start {
+            return Err(PontemeshError::InvalidArgument(
+                "manifest fragment range is invalid".to_string(),
+            ));
+        }
+        let range_size = fragment.byte_range_end - fragment.byte_range_start + 1;
+        if range_size != fragment.size_bytes as u64 {
+            return Err(PontemeshError::InvalidArgument(
+                "manifest fragment size does not match byte range".to_string(),
+            ));
+        }
+        next_offset = fragment.byte_range_end + 1;
+    }
+    if next_offset != manifest.total_size_bytes as u64 {
+        return Err(PontemeshError::InvalidArgument(
+            "manifest total size does not match fragment ranges".to_string(),
+        ));
+    }
+    Ok(())
 }

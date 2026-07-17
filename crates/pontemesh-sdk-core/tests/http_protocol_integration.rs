@@ -160,6 +160,7 @@ fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
     assert_event_field(&requests, r#""bytesTransferred":"#);
     assert_event_field(&requests, r#""outcome":"SUCCESS""#);
     assert_all_targets_hide_package_token(&requests);
+    assert_all_bodies_hide_tokens(&requests);
     assert_authorization_seen(
         &requests,
         "/pontemesh/access-packages",
@@ -237,6 +238,7 @@ fn sdk_falls_back_from_replica_to_origin_and_records_source_failure() {
     assert_event(&requests, "SOURCE_FAILURE");
     assert_event(&requests, "FRAGMENT_VALIDATED");
     assert_all_targets_hide_package_token(&requests);
+    assert_all_bodies_hide_tokens(&requests);
 }
 
 fn handle_connection(mut stream: TcpStream, addr: SocketAddr, state: &Arc<TestState>) {
@@ -567,6 +569,21 @@ fn assert_all_targets_hide_package_token(requests: &[LoggedRequest]) {
         assert!(
             !request.target.contains("package-token-secret"),
             "package token leaked into URL target {}",
+            request.target
+        );
+    }
+}
+
+fn assert_all_bodies_hide_tokens(requests: &[LoggedRequest]) {
+    for request in requests {
+        assert!(
+            !request.body.contains("package-token-secret"),
+            "package token leaked into request body for {}",
+            request.target
+        );
+        assert!(
+            !request.body.contains("application-token"),
+            "application token leaked into request body for {}",
             request.target
         );
     }

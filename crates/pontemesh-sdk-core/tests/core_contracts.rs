@@ -163,6 +163,23 @@ fn source_selector_allows_origin_with_empty_fragment_list() {
 }
 
 #[test]
+fn source_selector_rejects_expired_replica_and_origin_sources() {
+    let bytes = b"hello";
+    let manifest = manifest(bytes);
+    let peer = DisabledPeerTransport;
+    let mut expired_replica = source("replica", SourceType::ReplicaEdge, 1);
+    expired_replica.expires_at = "2000-01-01T00:00:00Z".to_string();
+    let mut expired_origin = source("origin", SourceType::Origin, 1);
+    expired_origin.expires_at = "2000-01-01T00:00:00Z".to_string();
+    let sources = vec![expired_replica, expired_origin];
+    let selection = SourceSelectionContract::default();
+    let selector = SourceSelector::new(&sources, &selection, &peer);
+    let ordered = selector.sources_for(&manifest.fragments[0]);
+
+    assert!(ordered.is_empty());
+}
+
+#[test]
 fn valid_fragment_sha256_is_accepted_and_invalid_is_rejected() {
     let descriptor = fragment(0, b"hello");
     validate_fragment(&descriptor, b"hello").expect("valid fragment");
@@ -255,6 +272,72 @@ impl PeerTransport for FailingPeer {
     ) -> Result<Vec<u8>, PontemeshError> {
         Err(PontemeshError::PeerTransportNotEnabled)
     }
+}
+
+#[test]
+fn manifest_mismatch_is_rejected_before_any_fragment_download() {
+    let bytes = b"hello";
+    let mut package = package(bytes, vec![source("origin", SourceType::Origin, 1)]);
+    package.manifest.manifest_id = "manifest-from-different-package".to_string();
+    let origin = FakeOrigin {
+        package: package.clone(),
+        announcements: Arc::new(Mutex::new(Vec::new())),
+    };
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let source = FakeSource {
+        bytes_by_source: HashMap::from([("origin".to_string(), Ok(bytes.to_vec()))]),
+        calls: calls.clone(),
+    };
+    let mut storage = MemoryStorage::new();
+
+    let result = sync_object(
+        &origin,
+        &source,
+        &DisabledPeerTransport,
+        &mut storage,
+        &SyncObjectRequest {
+            bucket: package.bucket.clone(),
+            key: package.key.clone(),
+            destination: "unused".into(),
+        },
+        None,
+    );
+
+    assert!(matches!(result, Err(PontemeshError::AccessDenied(_))));
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn malformed_manifest_ranges_are_rejected_before_any_fragment_download() {
+    let bytes = b"hello";
+    let mut package = package(bytes, vec![source("origin", SourceType::Origin, 1)]);
+    package.manifest.fragments[0].byte_range_start = 1;
+    let origin = FakeOrigin {
+        package: package.clone(),
+        announcements: Arc::new(Mutex::new(Vec::new())),
+    };
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let source = FakeSource {
+        bytes_by_source: HashMap::from([("origin".to_string(), Ok(bytes.to_vec()))]),
+        calls: calls.clone(),
+    };
+    let mut storage = MemoryStorage::new();
+
+    let result = sync_object(
+        &origin,
+        &source,
+        &DisabledPeerTransport,
+        &mut storage,
+        &SyncObjectRequest {
+            bucket: package.bucket.clone(),
+            key: package.key.clone(),
+            destination: "unused".into(),
+        },
+        None,
+    );
+
+    assert!(matches!(result, Err(PontemeshError::InvalidArgument(_))));
+    assert!(calls.lock().unwrap().is_empty());
 }
 
 #[test]
