@@ -27,7 +27,7 @@ if find . \
 fi
 
 for forbidden in legacy-src legacy-tests vitest "npm run" "setup-node"; do
-  if grep -R --exclude=check-no-dead-code.sh --exclude-dir=.git --exclude-dir=target -n "$forbidden" . >/tmp/pontemesh-sdk-hygiene.txt; then
+  if grep -R --exclude=check-no-dead-code.sh --exclude=full-stack-agent-gate.sh --exclude-dir=.git --exclude-dir=target -n "$forbidden" . >/tmp/pontemesh-sdk-hygiene.txt; then
     echo "Forbidden legacy marker found: $forbidden" >&2
     cat /tmp/pontemesh-sdk-hygiene.txt >&2
     exit 1

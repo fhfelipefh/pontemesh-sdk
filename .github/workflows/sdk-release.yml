@@ -1,0 +1,206 @@
+name: SDK Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, without the v prefix. Must match Cargo.toml."
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the GitHub release as a pre-release."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build SDK ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: linux-x64
+            os: ubuntu-latest
+            archive: tar
+          - name: macos-x64
+            os: macos-latest
+            archive: tar
+          - name: windows-x64
+            os: windows-latest
+            archive: zip
+
+    steps:
+      - name: Allow only repository owner
+        shell: bash
+        run: |
+          if [ "${{ github.actor }}" != "${{ github.repository_owner }}" ]; then
+            echo "Only the repository owner can publish releases with this workflow."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Validate version input
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Version must use semver format without the v prefix, for example 0.1.0."
+            exit 1
+          fi
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "$cargo_version" != "$version" ]; then
+            echo "Input version $version does not match Cargo.toml version $cargo_version."
+            exit 1
+          fi
+          if git rev-parse "v$version" >/dev/null 2>&1; then
+            echo "Tag v$version already exists."
+            exit 1
+          fi
+
+      - name: Repository hygiene
+        shell: bash
+        run: ./scripts/check-no-dead-code.sh
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build C ABI
+        run: cargo build -p pontemesh-sdk-c --release --locked
+
+      - name: Package Unix artifact
+        if: matrix.target.archive == 'tar'
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          target_name="${{ matrix.target.name }}"
+          package="pontemesh-sdk-v${version}-${target_name}"
+          mkdir -p "dist/$package/include" "dist/$package/bindings/cpp" "dist/$package/bindings/csharp" "dist/$package/bindings/unity"
+          cp bindings/c/include/pontemesh_sdk.h "dist/$package/include/"
+          cp bindings/cpp/pontemesh_sdk.hpp "dist/$package/bindings/cpp/"
+          cp bindings/csharp/PontemeshSdk.cs "dist/$package/bindings/csharp/"
+          cp bindings/unity/README.md "dist/$package/bindings/unity/"
+          cp README.md LICENSE "dist/$package/"
+          cp target/release/libpontemesh_sdk.* "dist/$package/" || true
+          tar -C dist -czf "dist/$package.tar.gz" "$package"
+          shasum -a 256 "dist/$package.tar.gz" | awk '{print $1}' > "dist/$package.tar.gz.sha256"
+
+      - name: Package Windows artifact
+        if: matrix.target.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          $targetName = "${{ matrix.target.name }}"
+          $package = "pontemesh-sdk-v$version-$targetName"
+          New-Item -ItemType Directory -Path "dist/$package/include" | Out-Null
+          New-Item -ItemType Directory -Path "dist/$package/bindings/cpp" | Out-Null
+          New-Item -ItemType Directory -Path "dist/$package/bindings/csharp" | Out-Null
+          New-Item -ItemType Directory -Path "dist/$package/bindings/unity" | Out-Null
+          Copy-Item "bindings/c/include/pontemesh_sdk.h" "dist/$package/include/"
+          Copy-Item "bindings/cpp/pontemesh_sdk.hpp" "dist/$package/bindings/cpp/"
+          Copy-Item "bindings/csharp/PontemeshSdk.cs" "dist/$package/bindings/csharp/"
+          Copy-Item "bindings/unity/README.md" "dist/$package/bindings/unity/"
+          Copy-Item "README.md" "dist/$package/"
+          Copy-Item "LICENSE" "dist/$package/"
+          Copy-Item "target/release/pontemesh_sdk.dll" "dist/$package/"
+          if (Test-Path "target/release/pontemesh_sdk.lib") {
+            Copy-Item "target/release/pontemesh_sdk.lib" "dist/$package/"
+          }
+          Compress-Archive -Path "dist/$package/*" -DestinationPath "dist/$package.zip" -Force
+          (Get-FileHash -Algorithm SHA256 "dist/$package.zip").Hash.ToLowerInvariant() | Set-Content "dist/$package.zip.sha256"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pontemesh-sdk-${{ matrix.target.name }}
+          path: |
+            dist/pontemesh-sdk-v${{ inputs.version }}-${{ matrix.target.name }}.tar.gz
+            dist/pontemesh-sdk-v${{ inputs.version }}-${{ matrix.target.name }}.tar.gz.sha256
+            dist/pontemesh-sdk-v${{ inputs.version }}-${{ matrix.target.name }}.zip
+            dist/pontemesh-sdk-v${{ inputs.version }}-${{ matrix.target.name }}.zip.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish SDK release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Build release manifest
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          manifest="dist/pontemesh-sdk-v${version}-manifest.json"
+          python3 -c 'import json, pathlib, sys
+version = sys.argv[1]
+manifest_path = pathlib.Path(sys.argv[2])
+assets = []
+for path in sorted(manifest_path.parent.glob("pontemesh-sdk-v*")):
+    if path.name.endswith(".sha256") or path.name.endswith("-manifest.json"):
+        continue
+    sha_path = pathlib.Path(str(path) + ".sha256")
+    assets.append({"name": path.name, "size": path.stat().st_size, "sha256": sha_path.read_text().strip().split()[0]})
+manifest_path.write_text(json.dumps({"schema": 1, "product": "sdk", "version": version, "assets": assets}, indent=2, sort_keys=True) + "\n")
+' "$version" "$manifest"
+
+      - name: Create and push tag
+        shell: bash
+        run: |
+          tag="v${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(
+            release
+            create
+            "v${{ inputs.version }}"
+            dist/pontemesh-sdk-v${{ inputs.version }}-*
+            --title
+            "Ponte Mesh SDK v${{ inputs.version }}"
+            --generate-notes
+          )
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}"
