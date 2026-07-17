@@ -388,9 +388,10 @@ fn run_worker(
         }
     };
     runtime.block_on(async move {
+        let startup_error_tx = ready_tx.clone();
         let result = run_swarm(keypair, listen_addrs, announce_addrs, command_rx, ready_tx).await;
         if let Err(error) = result {
-            let _ = error;
+            let _ = startup_error_tx.send(Err(error));
         }
     });
 }
@@ -410,7 +411,7 @@ async fn run_swarm(
             noise::Config::new,
             yamux::Config::default,
         )
-        .map_err(|error| PontemeshError::Internal(error.to_string()))?
+        .map_err(|error| PontemeshError::Internal(error_message(error)))?
         .with_behaviour(|_| {
             let protocols = [(
                 StreamProtocol::new(FRAGMENT_PROTOCOL),
@@ -423,7 +424,7 @@ async fn run_swarm(
                 ping: ping::Behaviour::default(),
             }
         })
-        .map_err(|error| PontemeshError::Internal(error.to_string()))?
+        .map_err(|error| PontemeshError::Internal(error_message(error)))?
         .with_swarm_config(|config| config.with_idle_connection_timeout(Duration::from_secs(30)))
         .build();
 
@@ -435,7 +436,7 @@ async fn run_swarm(
     for addr in listen {
         swarm
             .listen_on(addr)
-            .map_err(|error| PontemeshError::Internal(error.to_string()))?;
+            .map_err(|error| PontemeshError::Internal(error_message(error)))?;
     }
 
     let mut store = PeerStore::default();
@@ -514,6 +515,15 @@ fn send_fragment_request(
 ) {
     let request_id = request_response.send_request(&peer_id, request);
     pending.insert(request_id, reply);
+}
+
+fn error_message(error: impl std::fmt::Debug + std::fmt::Display) -> String {
+    let message = error.to_string();
+    if message.trim().is_empty() {
+        format!("{error:?}")
+    } else {
+        message
+    }
 }
 
 fn handle_request_response_event(
