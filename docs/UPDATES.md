@@ -11,9 +11,10 @@ public and the release version is already committed in `Cargo.toml`.
 
 The workflow:
 
-- accepts a semver version without the `v` prefix;
+- reads the semver version directly from `Cargo.toml`;
+- marks versions containing a semver pre-release suffix as pre-releases;
 - refuses to publish if the caller is not the repository owner;
-- refuses to publish if `Cargo.toml` does not match the requested version;
+- refuses to publish if the corresponding Git tag already exists;
 - builds and tests the SDK on Linux x64, Windows x64, macOS Intel, and macOS ARM;
 - publishes native SDK packages;
 - publishes `pontemesh-sdk-v<VERSION>-manifest.json` with SHA-256 and size for
