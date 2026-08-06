@@ -25,7 +25,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 cargo build --release
 cargo build -p pontemesh-sdk-c --release
-./scripts/tcc-libp2p-gate.sh
+bash ./scripts/libp2p-release-gate.sh
 ./scripts/production-no-mock-gate.sh
 ./scripts/production-p2p-benchmark-gate.sh
 # cargo-audit scans the full Cargo.lock, including optional libp2p-dns packages

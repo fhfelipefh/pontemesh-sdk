@@ -4,7 +4,7 @@ set -euo pipefail
 cargo build --release
 cargo build -p pontemesh-sdk-c --release
 
-./scripts/tcc-libp2p-gate.sh
+bash ./scripts/libp2p-release-gate.sh
 
 cargo run --release -p p2p-bench -- \
   --output target/pontemesh-benchmarks \

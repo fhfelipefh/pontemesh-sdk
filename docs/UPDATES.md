@@ -14,7 +14,7 @@ The workflow:
 - accepts a semver version without the `v` prefix;
 - refuses to publish if the caller is not the repository owner;
 - refuses to publish if `Cargo.toml` does not match the requested version;
-- builds and tests the SDK on Linux, macOS, and Windows;
+- builds and tests the SDK on Linux x64, Windows x64, macOS Intel, and macOS ARM;
 - publishes native SDK packages;
 - publishes `pontemesh-sdk-v<VERSION>-manifest.json` with SHA-256 and size for
   each asset.

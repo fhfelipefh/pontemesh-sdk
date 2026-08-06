@@ -47,6 +47,6 @@ cargo test -p pontemesh-sdk-core --test libp2p_malicious_peer -- --ignored --noc
 cargo test -p pontemesh-sdk-core --test libp2p_traffic_reduction -- --ignored --nocapture
 cargo build --release
 cargo build -p pontemesh-sdk-c --release
-./scripts/tcc-libp2p-gate.sh
+bash ./scripts/libp2p-release-gate.sh
 ./scripts/production-no-mock-gate.sh
 ```

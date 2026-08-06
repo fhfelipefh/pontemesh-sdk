@@ -4,7 +4,7 @@ Release candidate artifacts should include:
 
 - Linux shared library: `libpontemesh_sdk.so`
 - Windows dynamic library: `pontemesh_sdk.dll`
-- macOS dynamic library: `libpontemesh_sdk.dylib`
+- macOS Intel and ARM dynamic library: `libpontemesh_sdk.dylib`
 - static library where applicable: `libpontemesh_sdk.a`
 - C header: `bindings/c/include/pontemesh_sdk.h`
 - C# binding: `bindings/csharp/PontemeshSdk.cs`
@@ -19,8 +19,9 @@ Build commands:
 cargo build -p pontemesh-sdk-c --release
 ```
 
-Cross-platform artifacts require building on the target platform or using a
-configured cross-compilation toolchain.
+The release workflow builds each artifact on a runner with the matching target
+architecture and rejects a package when either its dynamic or static library is
+missing.
 
 The release manifest is mandatory for automated update staging. It must list
 each downloadable package with its file name, byte size, and SHA-256 digest.
