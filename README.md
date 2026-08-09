@@ -88,3 +88,10 @@ PONTEMESH_LIVE_KEY=maps/desert-v3.pak \
 ```
 
 `PONTEMESH_LIVE_EXPECTED_SHA256` is optional and, when set, is checked against the downloaded object.
+
+## Project links
+
+- [Ponte Mesh documentation](https://fhfelipefh.github.io/pontemesh-docs/)
+- [Ponte Mesh Server](https://github.com/fhfelipefh/pontemesh-server)
+- [Ponte Mesh SDK](https://github.com/fhfelipefh/pontemesh-sdk)
+- [Game Launcher Example](https://github.com/fhfelipefh/pontemesh-game-launcher-example)
