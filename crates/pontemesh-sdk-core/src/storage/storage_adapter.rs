@@ -1,5 +1,6 @@
 use crate::contracts::{FragmentDescriptor, Manifest};
 use crate::errors::PontemeshError;
+use std::io::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FragmentState {
@@ -21,4 +22,13 @@ pub trait StorageAdapter: Send {
         bytes: &[u8],
     ) -> Result<(), PontemeshError>;
     fn assemble(&self, manifest: &Manifest) -> Result<Vec<u8>, PontemeshError>;
+    fn assemble_into(
+        &self,
+        manifest: &Manifest,
+        writer: &mut dyn Write,
+    ) -> Result<u64, PontemeshError> {
+        let bytes = self.assemble(manifest)?;
+        writer.write_all(&bytes)?;
+        Ok(bytes.len() as u64)
+    }
 }

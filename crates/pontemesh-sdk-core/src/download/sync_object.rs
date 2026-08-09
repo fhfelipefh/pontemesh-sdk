@@ -1,4 +1,9 @@
+use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Instant;
 
 use crate::client::{OriginClient, SourceClient};
@@ -7,12 +12,28 @@ use crate::errors::PontemeshError;
 use crate::integrity::{sha256_hex, validate_fragment};
 use crate::p2p::PeerTransport;
 use crate::storage::{FragmentState, StorageAdapter};
+use sha2::{Digest, Sha256};
 
 use super::fragment_downloader::download_fragment;
 use super::{ProgressMap, SourceSelector};
 
 pub type ProgressCallback<'a> = &'a mut dyn FnMut(u32, u64, u64, &str);
 pub type TransferObserver<'a> = &'a mut dyn FnMut(TransferEvent);
+
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransferEvent {
@@ -114,8 +135,81 @@ pub fn sync_object_with_summary_and_observer(
     peer: &dyn PeerTransport,
     storage: &mut dyn StorageAdapter,
     request: &SyncObjectRequest,
+    progress: Option<ProgressCallback<'_>>,
+    observer: Option<TransferObserver<'_>>,
+) -> Result<SyncObjectResult, PontemeshError> {
+    sync_object_with_control(
+        origin,
+        source_client,
+        peer,
+        storage,
+        request,
+        progress,
+        observer,
+        &CancellationToken::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn sync_object_with_control(
+    origin: &dyn OriginClient,
+    source_client: &dyn SourceClient,
+    peer: &dyn PeerTransport,
+    storage: &mut dyn StorageAdapter,
+    request: &SyncObjectRequest,
+    progress: Option<ProgressCallback<'_>>,
+    observer: Option<TransferObserver<'_>>,
+    cancellation: &CancellationToken,
+) -> Result<SyncObjectResult, PontemeshError> {
+    sync_object_with_control_internal(
+        origin,
+        source_client,
+        peer,
+        storage,
+        request,
+        progress,
+        observer,
+        cancellation,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn sync_object_with_control_to_writer(
+    origin: &dyn OriginClient,
+    source_client: &dyn SourceClient,
+    peer: &dyn PeerTransport,
+    storage: &mut dyn StorageAdapter,
+    request: &SyncObjectRequest,
+    progress: Option<ProgressCallback<'_>>,
+    observer: Option<TransferObserver<'_>>,
+    cancellation: &CancellationToken,
+    writer: &mut dyn Write,
+) -> Result<SyncObjectResult, PontemeshError> {
+    sync_object_with_control_internal(
+        origin,
+        source_client,
+        peer,
+        storage,
+        request,
+        progress,
+        observer,
+        cancellation,
+        Some(writer),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sync_object_with_control_internal(
+    origin: &dyn OriginClient,
+    source_client: &dyn SourceClient,
+    peer: &dyn PeerTransport,
+    storage: &mut dyn StorageAdapter,
+    request: &SyncObjectRequest,
     mut progress: Option<ProgressCallback<'_>>,
     mut observer: Option<TransferObserver<'_>>,
+    cancellation: &CancellationToken,
+    assembly_writer: Option<&mut dyn Write>,
 ) -> Result<SyncObjectResult, PontemeshError> {
     if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
         return Err(PontemeshError::InvalidArgument(
@@ -145,9 +239,24 @@ pub fn sync_object_with_summary_and_observer(
 
     let mut fragments = manifest.fragments.clone();
     fragments.sort_by_key(|fragment| fragment.index);
+    let object_total_bytes = fragments
+        .iter()
+        .map(|fragment| fragment.size_bytes as u64)
+        .sum();
     for fragment in fragments {
+        if cancellation.is_cancelled() {
+            return Err(PontemeshError::Cancelled);
+        }
         if storage.fragment_state(&manifest, &fragment) == FragmentState::Validated {
             progress_map.mark(fragment.index, fragment.size_bytes as u64);
+            if let Some(callback) = progress.as_deref_mut() {
+                callback(
+                    fragment.index as u32,
+                    progress_map.total_bytes_downloaded(),
+                    object_total_bytes,
+                    "CACHE",
+                );
+            }
             continue;
         }
 
@@ -159,6 +268,9 @@ pub fn sync_object_with_summary_and_observer(
 
         let mut failed_sources = 0_u64;
         for source in candidate_sources {
+            if cancellation.is_cancelled() {
+                return Err(PontemeshError::Cancelled);
+            }
             emit(
                 &mut observer,
                 TransferEvent::FragmentDownloadStarted {
@@ -230,8 +342,8 @@ pub fn sync_object_with_summary_and_observer(
                     if let Some(callback) = progress.as_deref_mut() {
                         callback(
                             fragment.index as u32,
-                            progress_map.bytes_downloaded(fragment.index),
-                            fragment.size_bytes as u64,
+                            progress_map.total_bytes_downloaded(),
+                            object_total_bytes,
                             source_type_name(source.source_type),
                         );
                     }
@@ -268,14 +380,22 @@ pub fn sync_object_with_summary_and_observer(
         }
     }
 
-    let object = storage.assemble(&manifest)?;
+    let (object, object_bytes, digest) = if let Some(writer) = assembly_writer {
+        let mut hashing_writer = HashingWriter::new(writer);
+        let bytes = storage.assemble_into(&manifest, &mut hashing_writer)?;
+        (Vec::new(), bytes, hashing_writer.finish())
+    } else {
+        let object = storage.assemble(&manifest)?;
+        let bytes = object.len() as u64;
+        let digest = sha256_hex(&object);
+        (object, bytes, digest)
+    };
     emit(
         &mut observer,
         TransferEvent::ObjectAssembled {
-            bytes: object.len() as u64,
+            bytes: object_bytes,
         },
     );
-    let digest = sha256_hex(&object);
     if !digest.eq_ignore_ascii_case(&manifest.object_sha256) {
         return Err(PontemeshError::HashMismatch(
             "object sha256 mismatch".to_string(),
@@ -295,6 +415,36 @@ pub fn sync_object_with_summary_and_observer(
         bytes: object,
         summary,
     })
+}
+
+struct HashingWriter<'a> {
+    inner: &'a mut dyn Write,
+    hasher: Sha256,
+}
+
+impl<'a> HashingWriter<'a> {
+    fn new(inner: &'a mut dyn Write) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+
+    fn finish(self) -> String {
+        hex::encode(self.hasher.finalize())
+    }
+}
+
+impl Write for HashingWriter<'_> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buffer)?;
+        self.hasher.update(&buffer[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 pub fn source_type_name(source_type: SourceType) -> &'static str {

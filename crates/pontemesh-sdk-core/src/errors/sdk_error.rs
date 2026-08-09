@@ -16,6 +16,8 @@ pub enum PontemeshError {
     NoSourceAvailable,
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("insufficient disk space: {required} bytes required, {available} bytes available")]
+    InsufficientDiskSpace { required: u64, available: u64 },
     #[error("request cancelled")]
     Cancelled,
     #[error("peer transport is not enabled")]
@@ -33,6 +35,7 @@ impl PontemeshError {
             PontemeshError::HashMismatch(_) => ErrorCode::HashMismatch,
             PontemeshError::NoSourceAvailable => ErrorCode::NoSourceAvailable,
             PontemeshError::Io(_) => ErrorCode::IoError,
+            PontemeshError::InsufficientDiskSpace { .. } => ErrorCode::IoError,
             PontemeshError::Cancelled => ErrorCode::Cancelled,
             PontemeshError::PeerTransportNotEnabled => ErrorCode::PeerTransportNotEnabled,
             PontemeshError::Internal(_) => ErrorCode::InternalError,

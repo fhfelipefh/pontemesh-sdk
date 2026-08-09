@@ -36,6 +36,10 @@ impl ProgressMap {
             .unwrap_or_default()
     }
 
+    pub fn total_bytes_downloaded(&self) -> u64 {
+        self.bytes_by_fragment.values().sum()
+    }
+
     pub fn state(&self, fragment_index: usize) -> FragmentProgressState {
         self.state_by_fragment
             .get(&fragment_index)

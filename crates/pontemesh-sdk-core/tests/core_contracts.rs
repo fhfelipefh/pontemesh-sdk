@@ -10,8 +10,8 @@ use std::thread;
 use pontemesh_sdk_core::client::{OriginClient, SourceClient};
 use pontemesh_sdk_core::contracts::*;
 use pontemesh_sdk_core::download::{
-    order_sources_for_test, sync_object, FragmentProgressState, ProgressMap, SourceSelector,
-    SyncObjectRequest,
+    order_sources_for_test, sync_object, sync_object_with_control, CancellationToken,
+    FragmentProgressState, ProgressMap, SourceSelector, SyncObjectRequest,
 };
 use pontemesh_sdk_core::errors::PontemeshError;
 use pontemesh_sdk_core::integrity::{sha256_hex, validate_fragment};
@@ -272,6 +272,42 @@ impl PeerTransport for FailingPeer {
     ) -> Result<Vec<u8>, PontemeshError> {
         Err(PontemeshError::PeerTransportNotEnabled)
     }
+}
+
+#[test]
+fn cancellation_stops_before_downloading_a_fragment() {
+    let bytes = b"hello";
+    let package = package(bytes, vec![source("origin", SourceType::Origin, 1)]);
+    let origin = FakeOrigin {
+        package: package.clone(),
+        announcements: Arc::new(Mutex::new(Vec::new())),
+    };
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let source = FakeSource {
+        bytes_by_source: HashMap::from([("origin".to_string(), Ok(bytes.to_vec()))]),
+        calls: calls.clone(),
+    };
+    let mut storage = MemoryStorage::new();
+    let cancellation = CancellationToken::default();
+    cancellation.cancel();
+
+    let result = sync_object_with_control(
+        &origin,
+        &source,
+        &DisabledPeerTransport,
+        &mut storage,
+        &SyncObjectRequest {
+            bucket: package.bucket.clone(),
+            key: package.key.clone(),
+            destination: "unused".into(),
+        },
+        None,
+        None,
+        &cancellation,
+    );
+
+    assert!(matches!(result, Err(PontemeshError::Cancelled)));
+    assert!(calls.lock().unwrap().is_empty());
 }
 
 #[test]
