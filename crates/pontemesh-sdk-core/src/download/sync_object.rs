@@ -369,12 +369,9 @@ fn validate_manifest_contract(
             "manifest does not match access package".to_string(),
         ));
     }
-    if !manifest
-        .object_hash_algorithm
-        .eq_ignore_ascii_case("SHA256")
-    {
+    if !is_sha256(&manifest.object_hash_algorithm) {
         return Err(PontemeshError::InvalidArgument(
-            "manifest object hash algorithm must be SHA256".to_string(),
+            "manifest object hash algorithm must be SHA-256".to_string(),
         ));
     }
     if manifest.total_size_bytes < 0 {
@@ -393,9 +390,9 @@ fn validate_manifest_contract(
             ));
         }
         last_index = Some(fragment.index);
-        if !fragment.hash_algorithm.eq_ignore_ascii_case("SHA256") {
+        if !is_sha256(&fragment.hash_algorithm) {
             return Err(PontemeshError::InvalidArgument(
-                "fragment hash algorithm must be SHA256".to_string(),
+                "fragment hash algorithm must be SHA-256".to_string(),
             ));
         }
         if fragment.byte_range_start != next_offset {
@@ -422,4 +419,21 @@ fn validate_manifest_contract(
         ));
     }
     Ok(())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.eq_ignore_ascii_case("SHA-256") || value.eq_ignore_ascii_case("SHA256")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_sha256;
+
+    #[test]
+    fn accepts_the_server_and_legacy_sha256_spellings() {
+        assert!(is_sha256("SHA-256"));
+        assert!(is_sha256("sha-256"));
+        assert!(is_sha256("SHA256"));
+        assert!(!is_sha256("SHA-512"));
+    }
 }
