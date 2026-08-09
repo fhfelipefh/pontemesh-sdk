@@ -39,6 +39,31 @@ println!(
 # Ok::<(), pontemesh_sdk_core::PontemeshError>(())
 ```
 
+For large objects, use the disk-streaming API. It keeps validated fragments in a
+persistent cache, revalidates cached hashes after a restart, assembles through a
+temporary file, and restores the previous destination if installation fails:
+
+```rust
+use pontemesh_sdk_core::CancellationToken;
+
+let cancellation = CancellationToken::default();
+let summary = client.sync_object_to_disk_with_options(
+    SyncObjectRequest {
+        bucket: "game-assets".to_string(),
+        key: "maps/desert-v3.pak".to_string(),
+        destination: "./Game/Content/maps/desert-v3.pak".into(),
+    },
+    None,
+    cancellation,
+)?;
+# Ok::<(), pontemesh_sdk_core::PontemeshError>(())
+```
+
+`sync_object_to_disk_async` provides the same behavior without blocking an async UI
+runtime. Progress callbacks report validated bytes for the complete object, not only
+the current fragment. `release::ReleaseManifest` validates version descriptors,
+ordered multi-file installs, hashes, sizes, duplicate paths, and path traversal.
+
 ## Validate
 
 Production P2P defaults to libp2p + Noise + Yamux + request-response CBOR. The old TCP peer client/server is isolated behind the `legacy-tcp-dev` feature, which is disabled by default and is not part of the production gate.

@@ -9,7 +9,8 @@ pub mod sync_object;
 pub use progress_map::{FragmentProgressState, ProgressMap};
 pub use source_selector::SourceSelector;
 pub use sync_object::{
-    order_sources_for_test, sync_object, sync_object_with_summary,
-    sync_object_with_summary_and_observer, ProgressCallback, SyncObjectRequest, SyncObjectResult,
-    TransferEvent, TransferObserver, TransferSummary,
+    order_sources_for_test, sync_object, sync_object_with_control,
+    sync_object_with_control_to_writer, sync_object_with_summary,
+    sync_object_with_summary_and_observer, CancellationToken, ProgressCallback, SyncObjectRequest,
+    SyncObjectResult, TransferEvent, TransferObserver, TransferSummary,
 };
