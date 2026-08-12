@@ -2127,7 +2127,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "p2p-bench"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "csv",
  "pontemesh-sdk-core",
@@ -2257,7 +2257,7 @@ dependencies = [
 
 [[package]]
 name = "pontemesh-live-client"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "pontemesh-sdk-core",
  "serde_json",
@@ -2265,14 +2265,14 @@ dependencies = [
 
 [[package]]
 name = "pontemesh-sdk-c"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "pontemesh-sdk-core",
 ]
 
 [[package]]
 name = "pontemesh-sdk-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "fs2",

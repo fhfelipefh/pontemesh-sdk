@@ -1,5 +1,9 @@
+use std::io::Read;
+
 use crate::contracts::{AccessPackage, AuthorizedSource, FragmentDescriptor, SourceType};
 use crate::errors::PontemeshError;
+
+const MAX_ERROR_RESPONSE_BYTES: usize = 16 * 1024;
 
 pub trait SourceClient: Send + Sync {
     fn download_fragment(
@@ -49,17 +53,56 @@ impl SourceClient for HttpSourceClient {
             && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
         {
             let status = response.status();
-            let body = response.text().unwrap_or_default();
+            let (body, truncated) = read_body_limited(response, MAX_ERROR_RESPONSE_BYTES)
+                .unwrap_or_else(|_| (Vec::new(), false));
+            let mut body = String::from_utf8_lossy(&body).into_owned();
+            if truncated {
+                body.push_str(" [response body truncated]");
+            }
             return Err(source_error(
                 source.source_type,
                 format_http_error(status.as_u16(), &body),
             ));
         }
-        response
-            .bytes()
-            .map(|bytes| bytes.to_vec())
-            .map_err(|error| source_error(source.source_type, error.to_string()))
+        let declared_size = u64::try_from(fragment.size_bytes).unwrap_or(u64::MAX);
+        if response
+            .content_length()
+            .is_some_and(|length| length > declared_size)
+        {
+            return Err(source_error(
+                source.source_type,
+                "response exceeds declared fragment size".to_string(),
+            ));
+        }
+        let (bytes, truncated) = read_body_limited(response, fragment.size_bytes)
+            .map_err(|error| source_error(source.source_type, error))?;
+        if truncated {
+            return Err(source_error(
+                source.source_type,
+                "response exceeds declared fragment size".to_string(),
+            ));
+        }
+        Ok(bytes)
     }
+}
+
+fn read_body_limited(
+    response: reqwest::blocking::Response,
+    max_bytes: usize,
+) -> Result<(Vec<u8>, bool), String> {
+    let limit = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    response
+        .take(limit)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    let truncated = bytes.len() > max_bytes;
+    if truncated {
+        bytes.truncate(max_bytes);
+    }
+    Ok((bytes, truncated))
 }
 
 fn format_http_error(status: u16, body: &str) -> String {

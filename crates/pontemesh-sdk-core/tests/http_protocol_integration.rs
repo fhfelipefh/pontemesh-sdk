@@ -5,11 +5,20 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use pontemesh_sdk_core::client::{HttpSourceClient, SourceClient};
 use pontemesh_sdk_core::contracts::*;
 use pontemesh_sdk_core::integrity::sha256_hex;
 use pontemesh_sdk_core::{
     p2p::P2pConfig, PontemeshClient, PontemeshClientConfig, SyncObjectRequest,
 };
+
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[derive(Debug, Clone)]
 struct LoggedRequest {
@@ -23,6 +32,8 @@ struct LoggedRequest {
 struct TestState {
     requests: Mutex<Vec<LoggedRequest>>,
     replica_should_fail: bool,
+    oversized_fragments: bool,
+    oversized_error_response: bool,
 }
 
 struct TestServer {
@@ -34,6 +45,22 @@ struct TestServer {
 
 impl TestServer {
     fn start(replica_should_fail: bool) -> Self {
+        Self::start_with_options(replica_should_fail, false, false)
+    }
+
+    fn start_with_oversized_fragments() -> Self {
+        Self::start_with_options(false, true, false)
+    }
+
+    fn start_with_oversized_error_response() -> Self {
+        Self::start_with_options(false, false, true)
+    }
+
+    fn start_with_options(
+        replica_should_fail: bool,
+        oversized_fragments: bool,
+        oversized_error_response: bool,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         listener
             .set_nonblocking(true)
@@ -43,6 +70,8 @@ impl TestServer {
         let state = Arc::new(TestState {
             requests: Mutex::new(Vec::new()),
             replica_should_fail,
+            oversized_fragments,
+            oversized_error_response,
         });
         let thread_stop = Arc::clone(&stop);
         let thread_state = Arc::clone(&state);
@@ -75,6 +104,53 @@ impl TestServer {
     }
 }
 
+#[test]
+fn source_client_rejects_response_larger_than_declared_fragment() {
+    let _guard = test_guard();
+    let server = TestServer::start_with_oversized_fragments();
+    let package: AccessPackage =
+        serde_json::from_str(&access_package_json(server.addr)).expect("parse access package");
+    let source = package
+        .authorized_sources
+        .iter()
+        .find(|source| source.source_type == SourceType::Origin)
+        .expect("origin source");
+    let fragment = &package.manifest.fragments[0];
+
+    let error = HttpSourceClient::new()
+        .download_fragment(&package, source, fragment)
+        .expect_err("oversized fragment response must fail at the HTTP boundary");
+
+    assert!(
+        error
+            .to_string()
+            .contains("response exceeds declared fragment size"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn source_client_limits_error_response_body() {
+    let _guard = test_guard();
+    let server = TestServer::start_with_oversized_error_response();
+    let package: AccessPackage =
+        serde_json::from_str(&access_package_json(server.addr)).expect("parse access package");
+    let source = package
+        .authorized_sources
+        .iter()
+        .find(|source| source.source_type == SourceType::Origin)
+        .expect("origin source");
+    let fragment = &package.manifest.fragments[0];
+
+    let error = HttpSourceClient::new()
+        .download_fragment(&package, source, fragment)
+        .expect_err("oversized error response must fail");
+    let message = error.to_string();
+
+    assert!(message.contains("response body truncated"));
+    assert!(message.len() < 17 * 1024, "error response was not bounded");
+}
+
 impl Drop for TestServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
@@ -87,6 +163,7 @@ impl Drop for TestServer {
 
 #[test]
 fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
+    let _guard = test_guard();
     let server = TestServer::start(false);
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let destination = temp_dir.path().join("maps/desert-v3.pak");
@@ -177,6 +254,7 @@ fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
 
 #[test]
 fn sdk_falls_back_from_replica_to_origin_and_records_source_failure() {
+    let _guard = test_guard();
     let server = TestServer::start(true);
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let destination = temp_dir.path().join("maps/desert-v3.pak");
@@ -278,6 +356,8 @@ fn handle_connection(mut stream: TcpStream, addr: SocketAddr, state: &Arc<TestSt
     {
         if state.replica_should_fail {
             write_text(&mut stream, 503, "replica unavailable");
+        } else if state.oversized_fragments {
+            write_oversized_fragment(&mut stream);
         } else {
             write_fragment(&mut stream, &request);
         }
@@ -288,7 +368,13 @@ fn handle_connection(mut stream: TcpStream, addr: SocketAddr, state: &Arc<TestSt
             .target
             .starts_with("/pontemesh/access-packages/pkg-1/objects/")
     {
-        write_fragment(&mut stream, &request);
+        if state.oversized_error_response {
+            write_oversized_error(&mut stream);
+        } else if state.oversized_fragments {
+            write_oversized_fragment(&mut stream);
+        } else {
+            write_fragment(&mut stream, &request);
+        }
         return;
     }
 
@@ -479,6 +565,29 @@ fn write_fragment(stream: &mut TcpStream, request: &LoggedRequest) {
             &format!("bytes {start}-{end}/{}", object.len()),
         )],
     );
+}
+
+fn write_oversized_fragment(stream: &mut TcpStream) {
+    stream
+        .write_all(
+            b"HTTP/1.1 206 Partial Content\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+        )
+        .expect("write chunked headers");
+    let chunk = vec![b'x'; 4096];
+    for _ in 0..16 {
+        if write!(stream, "{:X}\r\n", chunk.len()).is_err()
+            || stream.write_all(&chunk).is_err()
+            || stream.write_all(b"\r\n").is_err()
+        {
+            return;
+        }
+    }
+    let _ = stream.write_all(b"0\r\n\r\n");
+}
+
+fn write_oversized_error(stream: &mut TcpStream) {
+    let body = "x".repeat(20 * 1024);
+    write_text(stream, 503, &body);
 }
 
 fn parse_range(value: &str) -> (usize, usize) {
