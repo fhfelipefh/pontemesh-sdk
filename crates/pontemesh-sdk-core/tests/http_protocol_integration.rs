@@ -382,6 +382,7 @@ fn handle_connection(mut stream: TcpStream, addr: SocketAddr, state: &Arc<TestSt
 }
 
 fn read_request(stream: &mut TcpStream) -> Option<LoggedRequest> {
+    stream.set_nonblocking(false).expect("set blocking");
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set read timeout");
