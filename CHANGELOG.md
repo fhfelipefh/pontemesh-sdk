@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.2
+
+### Changed
+
+- Migrated `libp2p` dependency from git (rev-pinned `v0.57.0-dev`) to published
+  `v0.56.0` on crates.io, enabling crate publication.
+- Added crates.io metadata (`description`, `keywords`, `categories`, `readme`)
+  to `pontemesh-sdk-core`.
+- Internal crates (`pontemesh-sdk-c`, `pontemesh-live-client`, `p2p-bench`)
+  marked as `publish = false`.
+
+### Added
+
+- Automated `cargo publish` to crates.io in the SDK release workflow
+  (`workflow_dispatch`). Pre-release versions are skipped.
+
 ## 0.1.0-rc.1
 
 Initial public release candidate.
