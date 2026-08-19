@@ -261,6 +261,9 @@ jobs:
       && github.actor == github.repository_owner
       && needs.validate.outputs.prerelease == 'false'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -275,8 +278,6 @@ jobs:
         run: cargo publish -p pontemesh-sdk-core --locked --dry-run
 
       - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish -p pontemesh-sdk-core --locked
 
   quality:
