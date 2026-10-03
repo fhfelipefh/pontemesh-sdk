@@ -9,7 +9,8 @@ use pontemesh_sdk_core::client::{HttpSourceClient, SourceClient};
 use pontemesh_sdk_core::contracts::*;
 use pontemesh_sdk_core::integrity::sha256_hex;
 use pontemesh_sdk_core::{
-    p2p::P2pConfig, PontemeshClient, PontemeshClientConfig, SyncObjectRequest,
+    p2p::P2pConfig, PontemeshClient, PontemeshClientConfig, PontemeshError, SyncObjectRequest,
+    UpdateCheckRequest,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -377,6 +378,80 @@ fn handle_connection(mut stream: TcpStream, addr: SocketAddr, state: &Arc<TestSt
         }
         return;
     }
+    if request.method == "GET" && request.target.starts_with("/pontemesh/updates/") {
+        if header(&request, "authorization") == Some("Bearer forbidden-token") {
+            write_json(
+                &mut stream,
+                403,
+                r#"{"error":"missing scope: pontemesh:update:check"}"#,
+            );
+            return;
+        }
+        if header(&request, "authorization") != Some("Bearer application-token")
+            && header(&request, "authorization") != Some("Bearer launcher-token")
+        {
+            write_text(&mut stream, 401, "authorization required");
+            return;
+        }
+        if request.target.contains("nonexistent") {
+            write_json(
+                &mut stream,
+                404,
+                r#"{"error":"no release found for software: nonexistent"}"#,
+            );
+            return;
+        }
+        if request.target.contains("disabled-scheme") {
+            write_json(
+                &mut stream,
+                400,
+                r#"{"error":"release versioning is disabled for bucket: disabled-scheme"}"#,
+            );
+            return;
+        }
+        if request.target.contains("current=not-a-valid-semver") {
+            write_json(
+                &mut stream,
+                400,
+                r#"{"error":"invalid semver in current version: not-a-valid-semver"}"#,
+            );
+            return;
+        }
+        if request.target.contains("current=1.1.0") {
+            write_json(
+                &mut stream,
+                200,
+                r#"{
+                    "bucket":"game-assets",
+                    "softwareId":"mygame",
+                    "versioningScheme":"SEMVER",
+                    "currentVersion":"1.1.0",
+                    "latestVersion":"1.1.0",
+                    "hasUpdate":false,
+                    "targetObjectKey":"mygame/releases/1.1.0/game.pak",
+                    "sizeBytes":2048,
+                    "mandatory":false
+                }"#,
+            );
+            return;
+        }
+        write_json(
+            &mut stream,
+            200,
+            r#"{
+                "bucket":"game-assets",
+                "softwareId":"mygame",
+                "versioningScheme":"SEMVER",
+                "currentVersion":"1.0.0",
+                "latestVersion":"1.1.0",
+                "hasUpdate":true,
+                "targetObjectKey":"mygame/releases/1.1.0/game.pak",
+                "sizeBytes":2048,
+                "mandatory":false
+            }"#,
+        );
+        return;
+    }
 
     write_text(&mut stream, 404, "not found");
 }
@@ -710,4 +785,154 @@ fn assert_authorization_seen(requests: &[LoggedRequest], target: &str, expected:
 
 fn object_bytes() -> Vec<u8> {
     b"desert-map-native-sdk".to_vec()
+}
+
+#[test]
+fn sdk_checks_software_update_success_when_newer_version_available() {
+    let _guard = test_guard();
+    let server = TestServer::start(false);
+    let client = PontemeshClient::new(PontemeshClientConfig {
+        origin_url: server.origin_url(),
+        application_token: "launcher-token".to_string(),
+        p2p: P2pConfig::default(),
+    })
+    .expect("create SDK client");
+
+    let request = UpdateCheckRequest::new("game-assets", "mygame").with_current_version("1.0.0");
+    let result = client
+        .check_software_update(&request)
+        .expect("check software update");
+
+    let update = result.expect("update info returned");
+    assert_eq!(update.software_id, "mygame");
+    assert_eq!(update.current_version.as_deref(), Some("1.0.0"));
+    assert_eq!(update.latest_version, "1.1.0");
+    assert!(update.has_update);
+    assert_eq!(update.target_object_key, "mygame/releases/1.1.0/game.pak");
+    assert_eq!(update.size_bytes, 2048);
+}
+
+#[test]
+fn sdk_checks_software_update_when_already_latest() {
+    let _guard = test_guard();
+    let server = TestServer::start(false);
+    let client = PontemeshClient::new(PontemeshClientConfig {
+        origin_url: server.origin_url(),
+        application_token: "launcher-token".to_string(),
+        p2p: P2pConfig::default(),
+    })
+    .expect("create SDK client");
+
+    let request = UpdateCheckRequest::new("game-assets", "mygame").with_current_version("1.1.0");
+    let result = client
+        .check_software_update(&request)
+        .expect("check software update");
+
+    let update = result.expect("update info returned");
+    assert_eq!(update.software_id, "mygame");
+    assert_eq!(update.current_version.as_deref(), Some("1.1.0"));
+    assert_eq!(update.latest_version, "1.1.0");
+    assert!(!update.has_update);
+}
+
+#[test]
+fn sdk_checks_software_update_returns_none_when_no_release_found() {
+    let _guard = test_guard();
+    let server = TestServer::start(false);
+    let client = PontemeshClient::new(PontemeshClientConfig {
+        origin_url: server.origin_url(),
+        application_token: "launcher-token".to_string(),
+        p2p: P2pConfig::default(),
+    })
+    .expect("create SDK client");
+
+    let request =
+        UpdateCheckRequest::new("game-assets", "nonexistent").with_current_version("1.0.0");
+    let result = client
+        .check_software_update(&request)
+        .expect("check software update");
+
+    assert!(result.is_none());
+}
+
+#[test]
+fn sdk_checks_software_update_handles_forbidden_scope() {
+    let _guard = test_guard();
+    let server = TestServer::start(false);
+    let client = PontemeshClient::new(PontemeshClientConfig {
+        origin_url: server.origin_url(),
+        application_token: "forbidden-token".to_string(),
+        p2p: P2pConfig::default(),
+    })
+    .expect("create SDK client");
+
+    let request = UpdateCheckRequest::new("game-assets", "mygame").with_current_version("1.0.0");
+    let error = client
+        .check_software_update(&request)
+        .expect_err("forbidden token must fail with access denied");
+
+    assert!(matches!(error, PontemeshError::AccessDenied(_)));
+}
+
+#[test]
+fn sdk_checks_software_update_handles_bad_request_errors() {
+    let _guard = test_guard();
+    let server = TestServer::start(false);
+    let client = PontemeshClient::new(PontemeshClientConfig {
+        origin_url: server.origin_url(),
+        application_token: "launcher-token".to_string(),
+        p2p: P2pConfig::default(),
+    })
+    .expect("create SDK client");
+
+    let request = UpdateCheckRequest::new("game-assets", "disabled-scheme");
+    let error = client
+        .check_software_update(&request)
+        .expect_err("disabled scheme must fail with invalid argument");
+    assert!(matches!(error, PontemeshError::InvalidArgument(_)));
+
+    let request_invalid_semver =
+        UpdateCheckRequest::new("game-assets", "mygame").with_current_version("not-a-valid-semver");
+    let error_semver = client
+        .check_software_update(&request_invalid_semver)
+        .expect_err("malformed version must fail with invalid argument");
+    assert!(matches!(error_semver, PontemeshError::InvalidArgument(_)));
+}
+
+#[test]
+fn sdk_end_to_end_launcher_update_and_download_flow() {
+    let _guard = test_guard();
+    let server = TestServer::start(false);
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let destination = temp_dir.path().join("launcher-target.bin");
+    let client = PontemeshClient::new(PontemeshClientConfig {
+        origin_url: server.origin_url(),
+        application_token: "launcher-token".to_string(),
+        p2p: P2pConfig::default(),
+    })
+    .expect("create SDK client");
+
+    let update_request =
+        UpdateCheckRequest::new("game-assets", "mygame").with_current_version("1.0.0");
+    let update_opt = client
+        .check_software_update(&update_request)
+        .expect("update check should succeed");
+
+    let update = update_opt.expect("update info present");
+    assert!(update.has_update);
+    assert_eq!(update.latest_version, "1.1.0");
+
+    let sync_req = update.to_sync_request(&destination);
+    assert_eq!(sync_req.bucket, "game-assets");
+    assert_eq!(sync_req.key, "mygame/releases/1.1.0/game.pak");
+
+    let result = client
+        .sync_object_with_summary(sync_req)
+        .expect("launcher download should succeed with launcher credentials");
+
+    assert_eq!(result.bytes, object_bytes());
+    assert_eq!(
+        std::fs::read(destination).expect("read dest"),
+        object_bytes()
+    );
 }

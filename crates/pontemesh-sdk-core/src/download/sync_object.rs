@@ -328,7 +328,7 @@ fn sync_object_with_control_internal(
                             )?;
                         }
                     }
-                    origin.record_event(
+                    let _ = origin.record_event(
                         &package.id,
                         &package.package_token,
                         &request.bucket,
@@ -336,7 +336,7 @@ fn sync_object_with_control_internal(
                         "FRAGMENT_VALIDATED",
                         Some(fragment.index),
                         Some(source_type_name(source.source_type)),
-                    )?;
+                    );
                     progress_map.mark(fragment.index, bytes.len() as u64);
                     record_summary_success(&mut summary, source.source_type, bytes.len() as u64);
                     if let Some(callback) = progress.as_deref_mut() {
@@ -401,7 +401,7 @@ fn sync_object_with_control_internal(
             "object sha256 mismatch".to_string(),
         ));
     }
-    origin.record_event(
+    let _ = origin.record_event(
         &package.id,
         &package.package_token,
         &request.bucket,
@@ -409,7 +409,7 @@ fn sync_object_with_control_internal(
         "OBJECT_SYNCED",
         None,
         None,
-    )?;
+    );
     emit(&mut observer, TransferEvent::TransferFinished);
     Ok(SyncObjectResult {
         bytes: object,

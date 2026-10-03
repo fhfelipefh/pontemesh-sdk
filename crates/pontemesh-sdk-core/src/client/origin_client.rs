@@ -1,8 +1,12 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use serde_json::json;
 
 use crate::contracts::{AccessPackage, CreateAccessPackageRequest, Manifest, SourceType};
 use crate::errors::PontemeshError;
 use crate::p2p::PeerAnnouncement;
+use crate::release::{SoftwareUpdateInfo, UpdateCheckRequest};
 
 #[derive(Debug, Clone)]
 pub struct PontemeshClientConfig {
@@ -46,12 +50,23 @@ pub trait OriginClient: Send + Sync {
         endpoint: &str,
         available_fragments: &[usize],
     ) -> Result<(), PontemeshError>;
+
+    fn check_software_update(
+        &self,
+        request: &UpdateCheckRequest,
+    ) -> Result<Option<SoftwareUpdateInfo>, PontemeshError> {
+        let _ = request;
+        Err(PontemeshError::OriginRequestFailed(
+            "check_software_update not implemented for this client".to_string(),
+        ))
+    }
 }
 
 pub struct HttpOriginClient {
     origin_url: String,
     application_token: String,
     http: reqwest::blocking::Client,
+    manifest_cache: Mutex<HashMap<(String, String), Manifest>>,
 }
 
 impl HttpOriginClient {
@@ -63,6 +78,7 @@ impl HttpOriginClient {
                 .no_proxy()
                 .build()
                 .expect("build HTTP client"),
+            manifest_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -127,15 +143,23 @@ impl OriginClient for HttpOriginClient {
             .json()
             .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
         self.normalize_origin_sources(&mut package);
+        if let Ok(mut cache) = self.manifest_cache.lock() {
+            cache.insert(
+                (package.bucket.clone(), package.key.clone()),
+                package.manifest.clone(),
+            );
+        }
         Ok(package)
     }
 
     fn get_manifest(&self, bucket: &str, key: &str) -> Result<Manifest, PontemeshError> {
-        let bucket = url_component(bucket);
-        let key = object_path(key);
+        let bucket_enc = url_component(bucket);
+        let key_enc = object_path(key);
         let response = self
             .http
-            .get(self.url(&format!("/pontemesh/objects/{bucket}/manifest/{key}")))
+            .get(self.url(&format!(
+                "/pontemesh/objects/{bucket_enc}/manifest/{key_enc}"
+            )))
             .bearer_auth(&self.application_token)
             .send()
             .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
@@ -147,9 +171,13 @@ impl OriginClient for HttpOriginClient {
                 &body,
             )));
         }
-        response
+        let manifest: Manifest = response
             .json()
-            .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))
+            .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
+        if let Ok(mut cache) = self.manifest_cache.lock() {
+            cache.insert((bucket.to_string(), key.to_string()), manifest.clone());
+        }
+        Ok(manifest)
     }
 
     fn record_event(
@@ -165,7 +193,17 @@ impl OriginClient for HttpOriginClient {
         let Some(fragment_index) = fragment_index else {
             return Ok(());
         };
-        let manifest = self.get_manifest(bucket, key)?;
+        let manifest = {
+            let cached = self
+                .manifest_cache
+                .lock()
+                .ok()
+                .and_then(|cache| cache.get(&(bucket.to_string(), key.to_string())).cloned());
+            match cached {
+                Some(manifest) => manifest,
+                None => self.get_manifest(bucket, key)?,
+            }
+        };
         let fragment = manifest
             .fragments
             .iter()
@@ -246,6 +284,75 @@ impl OriginClient for HttpOriginClient {
             )));
         }
         Ok(())
+    }
+
+    fn check_software_update(
+        &self,
+        request: &UpdateCheckRequest,
+    ) -> Result<Option<SoftwareUpdateInfo>, PontemeshError> {
+        if request.bucket.trim().is_empty() || request.software_id.trim().is_empty() {
+            return Err(PontemeshError::InvalidArgument(
+                "bucket and software_id are required for update check".to_string(),
+            ));
+        }
+
+        let bucket = url_component(request.bucket.trim());
+        let software_id = url_component(request.software_id.trim());
+        let mut query = Vec::new();
+        if let Some(current) = &request.current_version {
+            if !current.trim().is_empty() {
+                query.push(("current", current.trim()));
+            }
+        }
+        if let Some(channel) = &request.channel {
+            if !channel.trim().is_empty() {
+                query.push(("channel", channel.trim()));
+            }
+        }
+
+        let url = self.url(&format!("/pontemesh/updates/{bucket}/{software_id}"));
+        let response = self
+            .http
+            .get(&url)
+            .query(&query)
+            .bearer_auth(&self.application_token)
+            .send()
+            .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if response.status() == reqwest::StatusCode::FORBIDDEN
+            || response.status() == reqwest::StatusCode::UNAUTHORIZED
+        {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(PontemeshError::AccessDenied(format_http_error(
+                status.as_u16(),
+                &body,
+            )));
+        }
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(PontemeshError::InvalidArgument(format_http_error(
+                status.as_u16(),
+                &body,
+            )));
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(PontemeshError::OriginRequestFailed(format_http_error(
+                status.as_u16(),
+                &body,
+            )));
+        }
+
+        let update_info: SoftwareUpdateInfo = response
+            .json()
+            .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
+        Ok(Some(update_info))
     }
 }
 

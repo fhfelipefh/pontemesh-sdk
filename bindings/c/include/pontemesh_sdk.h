@@ -100,6 +100,30 @@ PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_get_last_error(
     size_t buffer_len
 );
 
+typedef struct PontemeshSoftwareUpdate {
+    char* bucket;
+    char* software_id;
+    char* versioning_scheme;
+    char* current_version;
+    char* latest_version;
+    int32_t has_update;
+    char* target_object_key;
+    uint64_t size_bytes;
+    char* manifest_id;
+    int32_t mandatory;
+} PontemeshSoftwareUpdate;
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_check_software_update(
+    PontemeshClient* client,
+    const char* bucket,
+    const char* software_id,
+    const char* current_version,
+    const char* channel,
+    PontemeshSoftwareUpdate** out_update
+);
+
+PONTEMESH_SDK_EXPORT void pontemesh_software_update_free(PontemeshSoftwareUpdate* update);
+
 PONTEMESH_SDK_EXPORT void pontemesh_client_free(PontemeshClient* client);
 
 #ifdef __cplusplus
