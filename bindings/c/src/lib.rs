@@ -6,6 +6,7 @@ use std::ptr;
 
 use pontemesh_sdk_core::{
     p2p::P2pConfig, ErrorCode, PontemeshClientConfig, SyncObjectRequest, TransferSummary,
+    UpdateCheckRequest,
 };
 
 pub struct PontemeshClient {
@@ -50,6 +51,21 @@ pub struct PontemeshTransferSummary {
     pub peer_hash_failures: u64,
     pub peer_rejected_fragments: u64,
     pub fallback_activations: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct PontemeshSoftwareUpdate {
+    pub bucket: *mut c_char,
+    pub software_id: *mut c_char,
+    pub versioning_scheme: *mut c_char,
+    pub current_version: *mut c_char,
+    pub latest_version: *mut c_char,
+    pub has_update: i32,
+    pub target_object_key: *mut c_char,
+    pub size_bytes: u64,
+    pub manifest_id: *mut c_char,
+    pub mandatory: i32,
 }
 
 #[no_mangle]
@@ -311,6 +327,123 @@ pub unsafe extern "C" fn pontemesh_client_free(client: *mut PontemeshClient) {
     }
 }
 
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+/// `bucket` and `software_id` must be valid null-terminated UTF-8 C strings.
+/// `current_version` and `channel` may be null or valid null-terminated UTF-8 C strings.
+/// `out_update` must be a valid writable pointer. If an update info is returned, it must be freed
+/// with `pontemesh_software_update_free`.
+pub unsafe extern "C" fn pontemesh_client_check_software_update(
+    client: *mut PontemeshClient,
+    bucket: *const c_char,
+    software_id: *const c_char,
+    current_version: *const c_char,
+    channel: *const c_char,
+    out_update: *mut *mut PontemeshSoftwareUpdate,
+) -> PontemeshStatus {
+    ffi_boundary(|| {
+        let client = match client.as_mut() {
+            Some(client) => client,
+            None => return PontemeshStatus::PontemeshInvalidArgument,
+        };
+        if out_update.is_null() {
+            return PontemeshStatus::PontemeshInvalidArgument;
+        }
+        *out_update = ptr::null_mut();
+
+        let bucket = match read_string(bucket) {
+            Ok(value) => value,
+            Err(status) => return set_error(client, "bucket is invalid", status),
+        };
+        let software_id = match read_string(software_id) {
+            Ok(value) => value,
+            Err(status) => return set_error(client, "software_id is invalid", status),
+        };
+        let current_version = if current_version.is_null() {
+            None
+        } else {
+            match read_string(current_version) {
+                Ok(value) => Some(value),
+                Err(status) => return set_error(client, "current_version is invalid", status),
+            }
+        };
+        let channel = if channel.is_null() {
+            None
+        } else {
+            match read_string(channel) {
+                Ok(value) => Some(value),
+                Err(status) => return set_error(client, "channel is invalid", status),
+            }
+        };
+
+        let request = UpdateCheckRequest {
+            bucket,
+            software_id,
+            current_version,
+            channel,
+        };
+
+        match client.inner.check_software_update(&request) {
+            Ok(Some(info)) => {
+                let to_raw =
+                    |s: &str| -> *mut c_char { CString::new(s).unwrap_or_default().into_raw() };
+                let opt_to_raw = |s: Option<String>| -> *mut c_char {
+                    s.and_then(|v| CString::new(v).ok())
+                        .map(CString::into_raw)
+                        .unwrap_or(ptr::null_mut())
+                };
+
+                let update = Box::new(PontemeshSoftwareUpdate {
+                    bucket: to_raw(&info.bucket),
+                    software_id: to_raw(&info.software_id),
+                    versioning_scheme: to_raw(&info.versioning_scheme),
+                    current_version: opt_to_raw(info.current_version),
+                    latest_version: to_raw(&info.latest_version),
+                    has_update: if info.has_update { 1 } else { 0 },
+                    target_object_key: to_raw(&info.target_object_key),
+                    size_bytes: info.size_bytes.max(0) as u64,
+                    manifest_id: opt_to_raw(info.manifest_id),
+                    mandatory: if info.mandatory { 1 } else { 0 },
+                });
+
+                *out_update = Box::into_raw(update);
+                client.last_error = None;
+                PontemeshStatus::PontemeshOk
+            }
+            Ok(None) => {
+                *out_update = ptr::null_mut();
+                client.last_error = None;
+                PontemeshStatus::PontemeshOk
+            }
+            Err(error) => set_error(client, &error.to_string(), status_from_code(error.code())),
+        }
+    })
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `update` must be null or a pointer returned by `pontemesh_client_check_software_update`.
+pub unsafe extern "C" fn pontemesh_software_update_free(update: *mut PontemeshSoftwareUpdate) {
+    if !update.is_null() {
+        let update = Box::from_raw(update);
+        let free_cstr = |p: *mut c_char| {
+            if !p.is_null() {
+                drop(CString::from_raw(p));
+            }
+        };
+        free_cstr(update.bucket);
+        free_cstr(update.software_id);
+        free_cstr(update.versioning_scheme);
+        free_cstr(update.current_version);
+        free_cstr(update.latest_version);
+        free_cstr(update.target_object_key);
+        free_cstr(update.manifest_id);
+    }
+}
+
 unsafe fn read_string(value: *const c_char) -> Result<String, PontemeshStatus> {
     if value.is_null() {
         return Err(PontemeshStatus::PontemeshInvalidArgument);
@@ -412,5 +545,21 @@ mod tests {
         assert_eq!(mapped.peer_hash_failures, 5);
         assert_eq!(mapped.peer_rejected_fragments, 6);
         assert_eq!(mapped.fallback_activations, 7);
+    }
+
+    #[test]
+    fn check_software_update_null_pointer_safety() {
+        let status = unsafe {
+            pontemesh_client_check_software_update(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(status, PontemeshStatus::PontemeshInvalidArgument);
+        unsafe { pontemesh_software_update_free(std::ptr::null_mut()) };
     }
 }

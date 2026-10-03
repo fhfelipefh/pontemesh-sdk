@@ -14,6 +14,7 @@ use crate::download::{
 };
 use crate::errors::PontemeshError;
 use crate::p2p::{DisabledPeerTransport, Libp2pTransport, P2pTransportKind, PeerTransport};
+use crate::release::{SoftwareUpdateInfo, UpdateCheckRequest};
 use crate::storage::FilesystemStorage;
 
 pub struct PontemeshClient {
@@ -202,6 +203,30 @@ impl PontemeshClient {
                 None,
                 cancellation,
             )
+        })
+        .await
+        .map_err(|error| PontemeshError::Internal(error.to_string()))?
+    }
+
+    pub fn check_software_update(
+        &self,
+        request: &UpdateCheckRequest,
+    ) -> Result<Option<SoftwareUpdateInfo>, PontemeshError> {
+        self.origin.check_software_update(request)
+    }
+
+    pub async fn check_software_update_async(
+        &self,
+        request: UpdateCheckRequest,
+    ) -> Result<Option<SoftwareUpdateInfo>, PontemeshError> {
+        let config = self.config.clone().ok_or_else(|| {
+            PontemeshError::InvalidArgument(
+                "async update check requires a client created from PontemeshClientConfig"
+                    .to_string(),
+            )
+        })?;
+        tokio::task::spawn_blocking(move || {
+            PontemeshClient::new(config)?.check_software_update(&request)
         })
         .await
         .map_err(|error| PontemeshError::Internal(error.to_string()))?

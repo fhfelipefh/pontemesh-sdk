@@ -13,3 +13,6 @@ pub use download::{
     CancellationToken, ProgressCallback, SyncObjectRequest, SyncObjectResult, TransferSummary,
 };
 pub use errors::{ErrorCode, PontemeshError};
+pub use release::{
+    ReleaseFile, ReleaseManifest, SoftwareUpdateInfo, UpdateCheckRequest, VersionScheme,
+};

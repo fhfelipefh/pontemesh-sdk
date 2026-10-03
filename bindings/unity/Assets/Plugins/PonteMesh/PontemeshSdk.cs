@@ -19,6 +19,35 @@ namespace PonteMesh
         public ulong FallbackActivations;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeSoftwareUpdate
+    {
+        public IntPtr Bucket;
+        public IntPtr SoftwareId;
+        public IntPtr VersioningScheme;
+        public IntPtr CurrentVersion;
+        public IntPtr LatestVersion;
+        public int HasUpdate;
+        public IntPtr TargetObjectKey;
+        public ulong SizeBytes;
+        public IntPtr ManifestId;
+        public int Mandatory;
+    }
+
+    public sealed class PontemeshSoftwareUpdate
+    {
+        public string Bucket { get; set; } = string.Empty;
+        public string SoftwareId { get; set; } = string.Empty;
+        public string VersioningScheme { get; set; } = string.Empty;
+        public string CurrentVersion { get; set; }
+        public string LatestVersion { get; set; } = string.Empty;
+        public bool HasUpdate { get; set; }
+        public string TargetObjectKey { get; set; } = string.Empty;
+        public ulong SizeBytes { get; set; }
+        public string ManifestId { get; set; }
+        public bool Mandatory { get; set; }
+    }
+
     public delegate void PontemeshProgressCallback(
         uint fragmentIndex,
         ulong bytesDownloaded,
@@ -89,6 +118,50 @@ namespace PonteMesh
         {
             var status = pontemesh_client_enable_p2p(client, listenAddr);
             ThrowIfError(status);
+        }
+
+        public PontemeshSoftwareUpdate CheckSoftwareUpdate(
+            string bucket,
+            string softwareId,
+            string currentVersion = null,
+            string channel = null
+        )
+        {
+            var status = pontemesh_client_check_software_update(
+                client,
+                bucket,
+                softwareId,
+                currentVersion,
+                channel,
+                out var updatePtr
+            );
+            ThrowIfError(status);
+            if (updatePtr == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            try
+            {
+                var native = (NativeSoftwareUpdate)Marshal.PtrToStructure(updatePtr, typeof(NativeSoftwareUpdate));
+                return new PontemeshSoftwareUpdate
+                {
+                    Bucket = Marshal.PtrToStringUTF8(native.Bucket) ?? string.Empty,
+                    SoftwareId = Marshal.PtrToStringUTF8(native.SoftwareId) ?? string.Empty,
+                    VersioningScheme = Marshal.PtrToStringUTF8(native.VersioningScheme) ?? string.Empty,
+                    CurrentVersion = native.CurrentVersion != IntPtr.Zero ? Marshal.PtrToStringUTF8(native.CurrentVersion) : null,
+                    LatestVersion = Marshal.PtrToStringUTF8(native.LatestVersion) ?? string.Empty,
+                    HasUpdate = native.HasUpdate != 0,
+                    TargetObjectKey = Marshal.PtrToStringUTF8(native.TargetObjectKey) ?? string.Empty,
+                    SizeBytes = native.SizeBytes,
+                    ManifestId = native.ManifestId != IntPtr.Zero ? Marshal.PtrToStringUTF8(native.ManifestId) : null,
+                    Mandatory = native.Mandatory != 0,
+                };
+            }
+            finally
+            {
+                pontemesh_software_update_free(updatePtr);
+            }
         }
 
         public void Dispose()
@@ -190,6 +263,19 @@ namespace PonteMesh
 
         [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
         private static extern void pontemesh_client_free(IntPtr client);
+
+        [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
+        private static extern PontemeshStatus pontemesh_client_check_software_update(
+            IntPtr client,
+            string bucket,
+            string softwareId,
+            string currentVersion,
+            string channel,
+            out IntPtr update
+        );
+
+        [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void pontemesh_software_update_free(IntPtr update);
 
         private delegate void NativeProgressCallback(
             uint fragmentIndex,
