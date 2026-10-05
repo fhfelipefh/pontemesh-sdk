@@ -8,20 +8,50 @@ use crate::errors::PontemeshError;
 use crate::p2p::PeerAnnouncement;
 use crate::release::{SoftwareUpdateInfo, UpdateCheckRequest};
 
-#[derive(Debug, Clone)]
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Default)]
 pub struct PontemeshClientConfig {
     pub origin_url: String,
     pub application_token: String,
     pub p2p: crate::p2p::P2pConfig,
+    pub suspended: bool,
+    pub allowed_directories: Vec<PathBuf>,
 }
 
 impl PontemeshClientConfig {
-    pub fn new(origin_url: String, application_token: String) -> Self {
+    pub fn new(origin_url: impl Into<String>, application_token: impl Into<String>) -> Self {
         Self {
-            origin_url,
-            application_token,
+            origin_url: origin_url.into(),
+            application_token: application_token.into(),
             p2p: crate::p2p::P2pConfig::default(),
+            suspended: false,
+            allowed_directories: Vec::new(),
         }
+    }
+
+    pub fn with_p2p(mut self, p2p: crate::p2p::P2pConfig) -> Self {
+        self.p2p = p2p;
+        self
+    }
+
+    pub fn with_suspended(mut self, suspended: bool) -> Self {
+        self.suspended = suspended;
+        self
+    }
+
+    pub fn with_allowed_directories<I, P>(mut self, dirs: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.allowed_directories = dirs.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn add_allowed_directory(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.allowed_directories.push(dir.into());
+        self
     }
 }
 
@@ -60,6 +90,8 @@ pub trait OriginClient: Send + Sync {
             "check_software_update not implemented for this client".to_string(),
         ))
     }
+
+    fn clear_memory_cache(&self) {}
 }
 
 pub struct HttpOriginClient {
@@ -353,6 +385,12 @@ impl OriginClient for HttpOriginClient {
             .json()
             .map_err(|error| PontemeshError::OriginRequestFailed(error.to_string()))?;
         Ok(Some(update_info))
+    }
+
+    fn clear_memory_cache(&self) {
+        if let Ok(mut cache) = self.manifest_cache.lock() {
+            cache.clear();
+        }
     }
 }
 

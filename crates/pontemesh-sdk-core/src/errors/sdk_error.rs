@@ -22,6 +22,10 @@ pub enum PontemeshError {
     Cancelled,
     #[error("peer transport is not enabled")]
     PeerTransportNotEnabled,
+    #[error("client is suspended / network deactivated")]
+    Suspended,
+    #[error("destination path is not allowed: {0}")]
+    PathNotAllowed(std::path::PathBuf),
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -38,6 +42,8 @@ impl PontemeshError {
             PontemeshError::InsufficientDiskSpace { .. } => ErrorCode::IoError,
             PontemeshError::Cancelled => ErrorCode::Cancelled,
             PontemeshError::PeerTransportNotEnabled => ErrorCode::PeerTransportNotEnabled,
+            PontemeshError::Suspended => ErrorCode::Suspended,
+            PontemeshError::PathNotAllowed(_) => ErrorCode::PathNotAllowed,
             PontemeshError::Internal(_) => ErrorCode::InternalError,
         }
     }

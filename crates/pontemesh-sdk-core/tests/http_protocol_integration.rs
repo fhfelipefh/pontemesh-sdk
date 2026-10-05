@@ -9,8 +9,7 @@ use pontemesh_sdk_core::client::{HttpSourceClient, SourceClient};
 use pontemesh_sdk_core::contracts::*;
 use pontemesh_sdk_core::integrity::sha256_hex;
 use pontemesh_sdk_core::{
-    p2p::P2pConfig, PontemeshClient, PontemeshClientConfig, PontemeshError, SyncObjectRequest,
-    UpdateCheckRequest,
+    PontemeshClient, PontemeshClientConfig, PontemeshError, SyncObjectRequest, UpdateCheckRequest,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -168,11 +167,10 @@ fn sdk_syncs_from_replica_records_events_and_keeps_package_token_out_of_urls() {
     let server = TestServer::start(false);
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let destination = temp_dir.path().join("maps/desert-v3.pak");
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: server.origin_url(),
-        application_token: "application-token".to_string(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        server.origin_url(),
+        "application-token",
+    ))
     .expect("create SDK client");
     let mut progress = Vec::new();
 
@@ -259,11 +257,10 @@ fn sdk_falls_back_from_replica_to_origin_and_records_source_failure() {
     let server = TestServer::start(true);
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let destination = temp_dir.path().join("maps/desert-v3.pak");
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: server.origin_url(),
-        application_token: "application-token".to_string(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        server.origin_url(),
+        "application-token",
+    ))
     .expect("create SDK client");
     let mut progress_sources = Vec::new();
 
@@ -791,11 +788,10 @@ fn object_bytes() -> Vec<u8> {
 fn sdk_checks_software_update_success_when_newer_version_available() {
     let _guard = test_guard();
     let server = TestServer::start(false);
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: server.origin_url(),
-        application_token: "launcher-token".to_string(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        server.origin_url(),
+        "launcher-token",
+    ))
     .expect("create SDK client");
 
     let request = UpdateCheckRequest::new("game-assets", "mygame").with_current_version("1.0.0");
@@ -816,11 +812,10 @@ fn sdk_checks_software_update_success_when_newer_version_available() {
 fn sdk_checks_software_update_when_already_latest() {
     let _guard = test_guard();
     let server = TestServer::start(false);
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: server.origin_url(),
-        application_token: "launcher-token".to_string(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        server.origin_url(),
+        "launcher-token",
+    ))
     .expect("create SDK client");
 
     let request = UpdateCheckRequest::new("game-assets", "mygame").with_current_version("1.1.0");
@@ -839,11 +834,10 @@ fn sdk_checks_software_update_when_already_latest() {
 fn sdk_checks_software_update_returns_none_when_no_release_found() {
     let _guard = test_guard();
     let server = TestServer::start(false);
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: server.origin_url(),
-        application_token: "launcher-token".to_string(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        server.origin_url(),
+        "launcher-token",
+    ))
     .expect("create SDK client");
 
     let request =
@@ -859,11 +853,10 @@ fn sdk_checks_software_update_returns_none_when_no_release_found() {
 fn sdk_checks_software_update_handles_forbidden_scope() {
     let _guard = test_guard();
     let server = TestServer::start(false);
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: server.origin_url(),
-        application_token: "forbidden-token".to_string(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        server.origin_url(),
+        "forbidden-token",
+    ))
     .expect("create SDK client");
 
     let request = UpdateCheckRequest::new("game-assets", "mygame").with_current_version("1.0.0");
@@ -878,11 +871,10 @@ fn sdk_checks_software_update_handles_forbidden_scope() {
 fn sdk_checks_software_update_handles_bad_request_errors() {
     let _guard = test_guard();
     let server = TestServer::start(false);
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: server.origin_url(),
-        application_token: "launcher-token".to_string(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        server.origin_url(),
+        "launcher-token",
+    ))
     .expect("create SDK client");
 
     let request = UpdateCheckRequest::new("game-assets", "disabled-scheme");
@@ -905,11 +897,10 @@ fn sdk_end_to_end_launcher_update_and_download_flow() {
     let server = TestServer::start(false);
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let destination = temp_dir.path().join("launcher-target.bin");
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: server.origin_url(),
-        application_token: "launcher-token".to_string(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        server.origin_url(),
+        "launcher-token",
+    ))
     .expect("create SDK client");
 
     let update_request =

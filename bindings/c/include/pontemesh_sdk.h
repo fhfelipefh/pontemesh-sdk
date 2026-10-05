@@ -25,6 +25,8 @@ typedef enum PontemeshStatus {
     PONTEMESH_NO_SOURCE_AVAILABLE = 5,
     PONTEMESH_IO_ERROR = 6,
     PONTEMESH_CANCELLED = 7,
+    PONTEMESH_SUSPENDED = 8,
+    PONTEMESH_PATH_NOT_ALLOWED = 9,
     PONTEMESH_INTERNAL_ERROR = 255
 } PontemeshStatus;
 
@@ -92,6 +94,33 @@ PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_sync_object_with_summary_a
     PontemeshTransferSummary* out_summary,
     PontemeshProgressCallback callback,
     void* user_data
+);
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_set_active(
+    PontemeshClient* client,
+    int32_t active
+);
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_is_active(
+    PontemeshClient* client,
+    int32_t* out_active
+);
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_suspend(
+    PontemeshClient* client
+);
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_resume(
+    PontemeshClient* client
+);
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_add_allowed_directory(
+    PontemeshClient* client,
+    const char* path
+);
+
+PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_clear_allowed_directories(
+    PontemeshClient* client
 );
 
 PONTEMESH_SDK_EXPORT PontemeshStatus pontemesh_client_get_last_error(

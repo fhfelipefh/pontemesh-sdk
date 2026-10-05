@@ -8,5 +8,7 @@ pub enum ErrorCode {
     IoError,
     Cancelled,
     PeerTransportNotEnabled,
+    Suspended,
+    PathNotAllowed,
     InternalError,
 }

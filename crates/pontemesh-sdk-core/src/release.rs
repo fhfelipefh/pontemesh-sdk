@@ -97,6 +97,7 @@ fn is_safe_relative_path(value: &str) -> bool {
     let path = Path::new(value);
     !value.trim().is_empty()
         && !value.contains('\\')
+        && !value.contains('\0')
         && !path.is_absolute()
         && path
             .components()

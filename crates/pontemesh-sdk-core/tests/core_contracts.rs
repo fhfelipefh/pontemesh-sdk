@@ -504,6 +504,7 @@ fn package_token_is_not_placed_in_pontemesh_urls() {
         origin_url: "https://origin.example.com".to_string(),
         application_token: "application-token".to_string(),
         p2p: P2pConfig::default(),
+        ..Default::default()
     };
     assert!(!origin.origin_url.contains("application-token"));
 }
@@ -523,6 +524,7 @@ fn p2p_required_returns_startup_error_instead_of_silent_disable() {
                 listen_addr: Some("127.0.0.1:1:not-a-socket".to_string()),
                 announce_addr: None,
             },
+            ..Default::default()
         },
     );
 

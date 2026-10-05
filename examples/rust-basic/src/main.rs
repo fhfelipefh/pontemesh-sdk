@@ -3,11 +3,10 @@ use pontemesh_sdk_core::{
 };
 
 fn main() -> Result<(), pontemesh_sdk_core::PontemeshError> {
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: "https://origin.example.com".to_string(),
-        application_token: "application-token".to_string(),
-        p2p: P2pConfig::default(),
-    })?;
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        "https://origin.example.com",
+        "application-token",
+    ))?;
 
     let result = client.sync_object_with_summary(SyncObjectRequest {
         bucket: "game-assets".to_string(),

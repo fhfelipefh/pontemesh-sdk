@@ -6,5 +6,5 @@ license.workspace = true
 publish = false
 
 [dependencies]
-pontemesh-sdk-core = { path = "../../crates/pontemesh-sdk-core", version = "0.2.2" }
+pontemesh-sdk-core = { path = "../../crates/pontemesh-sdk-core", version = "0.3.0" }
 serde_json = "1"

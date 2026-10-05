@@ -1,8 +1,8 @@
 use std::{env, path::PathBuf, process::ExitCode, time::Instant};
 
 use pontemesh_sdk_core::{
-    integrity::sha256_hex, p2p::P2pConfig, PontemeshClient, PontemeshClientConfig,
-    SyncObjectRequest, UpdateCheckRequest,
+    integrity::sha256_hex, PontemeshClient, PontemeshClientConfig, SyncObjectRequest,
+    UpdateCheckRequest,
 };
 use serde_json::json;
 
@@ -45,11 +45,10 @@ fn run() -> Result<(), String> {
         None => return Ok(()),
     };
     let started = Instant::now();
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: config.origin_url.clone(),
-        application_token: config.application_token.clone(),
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        config.origin_url.clone(),
+        config.application_token.clone(),
+    ))
     .map_err(|error| error.to_string())?;
 
     match config.mode {

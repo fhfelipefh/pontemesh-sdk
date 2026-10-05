@@ -116,6 +116,41 @@ namespace PonteMesh
             ThrowIfError(status);
         }
 
+        public void SetActive(bool active)
+        {
+            var status = pontemesh_client_set_active(_client, active ? 1 : 0);
+            ThrowIfError(status);
+        }
+
+        public bool IsActive()
+        {
+            return pontemesh_client_is_active(_client) != 0;
+        }
+
+        public void Suspend()
+        {
+            var status = pontemesh_client_suspend(_client);
+            ThrowIfError(status);
+        }
+
+        public void Resume()
+        {
+            var status = pontemesh_client_resume(_client);
+            ThrowIfError(status);
+        }
+
+        public void AddAllowedDirectory(string directoryPath)
+        {
+            var status = pontemesh_client_add_allowed_directory(_client, directoryPath);
+            ThrowIfError(status);
+        }
+
+        public void ClearAllowedDirectories()
+        {
+            var status = pontemesh_client_clear_allowed_directories(_client);
+            ThrowIfError(status);
+        }
+
         public PontemeshSoftwareUpdate? CheckSoftwareUpdate(
             string bucket,
             string softwareId,
@@ -253,6 +288,38 @@ namespace PonteMesh
         );
 
         [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
+        private static extern PontemeshStatus pontemesh_client_set_active(
+            IntPtr client,
+            int active
+        );
+
+        [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int pontemesh_client_is_active(
+            IntPtr client
+        );
+
+        [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
+        private static extern PontemeshStatus pontemesh_client_suspend(
+            IntPtr client
+        );
+
+        [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
+        private static extern PontemeshStatus pontemesh_client_resume(
+            IntPtr client
+        );
+
+        [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
+        private static extern PontemeshStatus pontemesh_client_add_allowed_directory(
+            IntPtr client,
+            string directoryPath
+        );
+
+        [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
+        private static extern PontemeshStatus pontemesh_client_clear_allowed_directories(
+            IntPtr client
+        );
+
+        [DllImport("pontemesh_sdk", CallingConvention = CallingConvention.Cdecl)]
         private static extern PontemeshStatus pontemesh_client_get_last_error(
             IntPtr client,
             byte[] buffer,
@@ -294,6 +361,8 @@ namespace PonteMesh
         PONTEMESH_NO_SOURCE_AVAILABLE = 5,
         PONTEMESH_IO_ERROR = 6,
         PONTEMESH_CANCELLED = 7,
+        PONTEMESH_SUSPENDED = 8,
+        PONTEMESH_PATH_NOT_ALLOWED = 9,
         PONTEMESH_INTERNAL_ERROR = 255
     }
 }

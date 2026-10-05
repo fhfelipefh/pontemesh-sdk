@@ -8,7 +8,7 @@ pub mod p2p;
 pub mod release;
 pub mod storage;
 
-pub use client::{PontemeshClient, PontemeshClientConfig};
+pub use client::{validate_path_against_allowed, PontemeshClient, PontemeshClientConfig};
 pub use download::{
     CancellationToken, ProgressCallback, SyncObjectRequest, SyncObjectResult, TransferSummary,
 };

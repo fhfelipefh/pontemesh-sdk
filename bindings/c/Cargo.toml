@@ -10,4 +10,4 @@ name = "pontemesh_sdk"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-pontemesh-sdk-core = { path = "../../crates/pontemesh-sdk-core", version = "0.2.2" }
+pontemesh-sdk-core = { path = "../../crates/pontemesh-sdk-core", version = "0.3.0" }

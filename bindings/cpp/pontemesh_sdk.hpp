@@ -71,6 +71,45 @@ public:
         }
     }
 
+    void set_active(bool active) {
+        PontemeshStatus status = pontemesh_client_set_active(client_, active ? 1 : 0);
+        if (status != PONTEMESH_OK) {
+            throw std::runtime_error(last_error("pontemesh_client_set_active failed"));
+        }
+    }
+
+    bool is_active() const {
+        return pontemesh_client_is_active(client_) != 0;
+    }
+
+    void suspend() {
+        PontemeshStatus status = pontemesh_client_suspend(client_);
+        if (status != PONTEMESH_OK) {
+            throw std::runtime_error(last_error("pontemesh_client_suspend failed"));
+        }
+    }
+
+    void resume() {
+        PontemeshStatus status = pontemesh_client_resume(client_);
+        if (status != PONTEMESH_OK) {
+            throw std::runtime_error(last_error("pontemesh_client_resume failed"));
+        }
+    }
+
+    void add_allowed_directory(const char* directory_path) {
+        PontemeshStatus status = pontemesh_client_add_allowed_directory(client_, directory_path);
+        if (status != PONTEMESH_OK) {
+            throw std::runtime_error(last_error("pontemesh_client_add_allowed_directory failed"));
+        }
+    }
+
+    void clear_allowed_directories() {
+        PontemeshStatus status = pontemesh_client_clear_allowed_directories(client_);
+        if (status != PONTEMESH_OK) {
+            throw std::runtime_error(last_error("pontemesh_client_clear_allowed_directories failed"));
+        }
+    }
+
     std::optional<SoftwareUpdate> check_software_update(
         const char* bucket,
         const char* software_id,

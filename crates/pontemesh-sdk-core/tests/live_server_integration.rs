@@ -1,9 +1,7 @@
 use std::env;
 
 use pontemesh_sdk_core::integrity::sha256_hex;
-use pontemesh_sdk_core::{
-    p2p::P2pConfig, PontemeshClient, PontemeshClientConfig, SyncObjectRequest,
-};
+use pontemesh_sdk_core::{PontemeshClient, PontemeshClientConfig, SyncObjectRequest};
 
 struct LiveConfig {
     origin_url: String,
@@ -20,11 +18,10 @@ fn sdk_syncs_object_from_live_pontemesh_server() {
     };
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let destination = temp_dir.path().join("downloaded-object.bin");
-    let client = PontemeshClient::new(PontemeshClientConfig {
-        origin_url: config.origin_url,
-        application_token: config.application_token,
-        p2p: P2pConfig::default(),
-    })
+    let client = PontemeshClient::new(PontemeshClientConfig::new(
+        config.origin_url,
+        config.application_token,
+    ))
     .expect("create SDK client");
     let mut progress = Vec::new();
 

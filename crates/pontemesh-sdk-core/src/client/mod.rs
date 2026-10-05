@@ -1,12 +1,16 @@
 pub mod origin_client;
+pub mod path_guard;
 pub mod source_client;
 
 pub use origin_client::{HttpOriginClient, OriginClient, PontemeshClientConfig};
+pub use path_guard::validate_path_against_allowed;
 pub use source_client::{HttpSourceClient, SourceClient};
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 
 use crate::download::{
     sync_object_with_control, sync_object_with_control_to_writer, CancellationToken,
@@ -21,12 +25,14 @@ pub struct PontemeshClient {
     config: Option<PontemeshClientConfig>,
     origin: Box<dyn OriginClient>,
     source: Box<dyn SourceClient>,
-    peer: Box<dyn PeerTransport>,
+    peer: Arc<RwLock<Box<dyn PeerTransport>>>,
+    suspended: Arc<AtomicBool>,
+    allowed_directories: Arc<RwLock<Vec<PathBuf>>>,
 }
 
 impl PontemeshClient {
     pub fn new(config: PontemeshClientConfig) -> Result<Self, PontemeshError> {
-        let peer: Box<dyn PeerTransport> = if config.p2p.enabled {
+        let peer: Box<dyn PeerTransport> = if !config.suspended && config.p2p.enabled {
             let started: Result<Box<dyn PeerTransport>, PontemeshError> = match config.p2p.transport
             {
                 P2pTransportKind::Libp2p => {
@@ -45,16 +51,20 @@ impl PontemeshClient {
                     Box::new(DisabledPeerTransport)
                 }
             }
-        } else if config.p2p.required {
+        } else if !config.suspended && config.p2p.required {
             return Err(PontemeshError::PeerTransportNotEnabled);
         } else {
             Box::new(DisabledPeerTransport)
         };
+        let suspended = Arc::new(AtomicBool::new(config.suspended));
+        let allowed_directories = Arc::new(RwLock::new(config.allowed_directories.clone()));
         Ok(Self {
             config: Some(config.clone()),
             origin: Box::new(HttpOriginClient::new(config)),
             source: Box::new(HttpSourceClient::new()),
-            peer,
+            peer: Arc::new(RwLock::new(peer)),
+            suspended,
+            allowed_directories,
         })
     }
 
@@ -67,15 +77,92 @@ impl PontemeshClient {
             config: None,
             origin,
             source,
-            peer,
+            peer: Arc::new(RwLock::new(peer)),
+            suspended: Arc::new(AtomicBool::new(false)),
+            allowed_directories: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
-    pub fn enable_p2p(&mut self, listen_addr: Option<&str>) -> Result<(), PontemeshError> {
+    pub fn is_suspended(&self) -> bool {
+        self.suspended.load(Ordering::Acquire)
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.is_suspended()
+    }
+
+    pub fn suspend(&self) -> Result<(), PontemeshError> {
+        self.set_suspended(true)
+    }
+
+    pub fn resume(&self) -> Result<(), PontemeshError> {
+        self.set_suspended(false)
+    }
+
+    pub fn set_active(&self, active: bool) -> Result<(), PontemeshError> {
+        self.set_suspended(!active)
+    }
+
+    pub fn set_suspended(&self, suspended: bool) -> Result<(), PontemeshError> {
+        self.suspended.store(suspended, Ordering::Release);
+        if suspended {
+            self.origin.clear_memory_cache();
+            if let Ok(mut peer) = self.peer.write() {
+                *peer = Box::new(DisabledPeerTransport);
+            }
+        } else if let Some(config) = &self.config {
+            if config.p2p.enabled {
+                if let Ok(mut peer) = self.peer.write() {
+                    match config.p2p.transport {
+                        P2pTransportKind::Libp2p => {
+                            if let Ok(p2p) = Libp2pTransport::start(
+                                &config.p2p.listen_addrs,
+                                &config.p2p.announce_addrs,
+                            ) {
+                                *peer = Box::new(p2p);
+                            }
+                        }
+                        P2pTransportKind::Disabled => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn allowed_directories(&self) -> Vec<PathBuf> {
+        self.allowed_directories.read().unwrap().clone()
+    }
+
+    pub fn set_allowed_directories(&self, dirs: Vec<PathBuf>) {
+        let mut guard = self.allowed_directories.write().unwrap();
+        *guard = dirs;
+    }
+
+    pub fn add_allowed_directory(&self, dir: impl Into<PathBuf>) {
+        let mut guard = self.allowed_directories.write().unwrap();
+        guard.push(dir.into());
+    }
+
+    pub fn clear_allowed_directories(&self) {
+        let mut guard = self.allowed_directories.write().unwrap();
+        guard.clear();
+    }
+
+    pub fn validate_destination_path(&self, destination: &Path) -> Result<PathBuf, PontemeshError> {
+        let allowed = self.allowed_directories.read().unwrap();
+        validate_path_against_allowed(destination, &allowed)
+    }
+
+    pub fn enable_p2p(&self, listen_addr: Option<&str>) -> Result<(), PontemeshError> {
         let listen_addrs = listen_addr
             .map(|addr| vec![addr.to_string()])
             .unwrap_or_else(|| vec!["/ip4/127.0.0.1/tcp/0".to_string()]);
-        self.peer = Box::new(Libp2pTransport::start(&listen_addrs, &[])?);
+        let mut peer = self
+            .peer
+            .write()
+            .map_err(|e| PontemeshError::Internal(e.to_string()))?;
+        *peer = Box::new(Libp2pTransport::start(&listen_addrs, &[])?);
         Ok(())
     }
 
@@ -113,19 +200,28 @@ impl PontemeshClient {
         progress: Option<ProgressCallback<'_>>,
         cancellation: CancellationToken,
     ) -> Result<SyncObjectResult, PontemeshError> {
-        let cache_root = cache_root(&request.destination);
+        if self.is_suspended() {
+            return Err(PontemeshError::Suspended);
+        }
+        let validated_dest = self.validate_destination_path(&request.destination)?;
+        let cache_root = cache_root(&validated_dest);
+        let _ = self.validate_destination_path(&cache_root)?;
         let mut storage = FilesystemStorage::new(cache_root);
+        let peer_guard = self
+            .peer
+            .read()
+            .map_err(|e| PontemeshError::Internal(e.to_string()))?;
         let result = sync_object_with_control(
             self.origin.as_ref(),
             self.source.as_ref(),
-            self.peer.as_ref(),
+            peer_guard.as_ref(),
             &mut storage,
             &request,
             progress,
             None,
             &cancellation,
         )?;
-        install_atomically(&request.destination, &result.bytes)?;
+        install_atomically(&validated_dest, &result.bytes)?;
         Ok(result)
     }
 
@@ -146,18 +242,26 @@ impl PontemeshClient {
         progress: Option<ProgressCallback<'_>>,
         cancellation: CancellationToken,
     ) -> Result<TransferSummary, PontemeshError> {
-        let parent = request
-            .destination
+        if self.is_suspended() {
+            return Err(PontemeshError::Suspended);
+        }
+        let validated_dest = self.validate_destination_path(&request.destination)?;
+        let validated_cache = self.validate_destination_path(&cache_directory)?;
+        let parent = validated_dest
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
         let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-        let mut storage = FilesystemStorage::new(cache_directory);
+        let mut storage = FilesystemStorage::new(validated_cache);
+        let peer_guard = self
+            .peer
+            .read()
+            .map_err(|e| PontemeshError::Internal(e.to_string()))?;
         let result = sync_object_with_control_to_writer(
             self.origin.as_ref(),
             self.source.as_ref(),
-            self.peer.as_ref(),
+            peer_guard.as_ref(),
             &mut storage,
             &request,
             progress,
@@ -166,7 +270,7 @@ impl PontemeshClient {
             temporary.as_file_mut(),
         )?;
         temporary.as_file().sync_all()?;
-        persist_atomically(&request.destination, temporary)?;
+        persist_atomically(&validated_dest, temporary)?;
         Ok(result.summary)
     }
 
@@ -175,11 +279,16 @@ impl PontemeshClient {
         request: SyncObjectRequest,
         cancellation: CancellationToken,
     ) -> Result<SyncObjectResult, PontemeshError> {
-        let config = self.config.clone().ok_or_else(|| {
+        if self.is_suspended() {
+            return Err(PontemeshError::Suspended);
+        }
+        let mut config = self.config.clone().ok_or_else(|| {
             PontemeshError::InvalidArgument(
                 "async sync requires a client created from PontemeshClientConfig".to_string(),
             )
         })?;
+        config.allowed_directories = self.allowed_directories();
+        config.suspended = self.is_suspended();
         tokio::task::spawn_blocking(move || {
             PontemeshClient::new(config)?.sync_object_with_options(request, None, cancellation)
         })
@@ -192,11 +301,16 @@ impl PontemeshClient {
         request: SyncObjectRequest,
         cancellation: CancellationToken,
     ) -> Result<TransferSummary, PontemeshError> {
-        let config = self.config.clone().ok_or_else(|| {
+        if self.is_suspended() {
+            return Err(PontemeshError::Suspended);
+        }
+        let mut config = self.config.clone().ok_or_else(|| {
             PontemeshError::InvalidArgument(
                 "async sync requires a client created from PontemeshClientConfig".to_string(),
             )
         })?;
+        config.allowed_directories = self.allowed_directories();
+        config.suspended = self.is_suspended();
         tokio::task::spawn_blocking(move || {
             PontemeshClient::new(config)?.sync_object_to_disk_with_options(
                 request,
@@ -212,6 +326,9 @@ impl PontemeshClient {
         &self,
         request: &UpdateCheckRequest,
     ) -> Result<Option<SoftwareUpdateInfo>, PontemeshError> {
+        if self.is_suspended() {
+            return Err(PontemeshError::Suspended);
+        }
         self.origin.check_software_update(request)
     }
 
@@ -219,12 +336,17 @@ impl PontemeshClient {
         &self,
         request: UpdateCheckRequest,
     ) -> Result<Option<SoftwareUpdateInfo>, PontemeshError> {
-        let config = self.config.clone().ok_or_else(|| {
+        if self.is_suspended() {
+            return Err(PontemeshError::Suspended);
+        }
+        let mut config = self.config.clone().ok_or_else(|| {
             PontemeshError::InvalidArgument(
                 "async update check requires a client created from PontemeshClientConfig"
                     .to_string(),
             )
         })?;
+        config.allowed_directories = self.allowed_directories();
+        config.suspended = self.is_suspended();
         tokio::task::spawn_blocking(move || {
             PontemeshClient::new(config)?.check_software_update(&request)
         })
@@ -267,22 +389,25 @@ fn persist_atomically(
     temporary: tempfile::NamedTempFile,
 ) -> Result<(), PontemeshError> {
     let backup = destination.with_extension("pontemesh-rollback");
-    if backup.exists() {
-        fs::remove_file(&backup)?;
+    if backup.is_symlink() || backup.exists() {
+        let _ = fs::remove_file(&backup);
     }
-    if destination.exists() {
+    if destination.is_symlink() {
+        // If destination is a symlink, remove it instead of writing through it
+        let _ = fs::remove_file(destination);
+    } else if destination.exists() {
         fs::rename(destination, &backup)?;
     }
     match temporary.persist(destination) {
         Ok(_) => {
-            if backup.exists() {
-                fs::remove_file(backup)?;
+            if backup.is_symlink() || backup.exists() {
+                let _ = fs::remove_file(backup);
             }
             Ok(())
         }
         Err(error) => {
-            if backup.exists() {
-                fs::rename(backup, destination)?;
+            if backup.is_symlink() || backup.exists() {
+                let _ = fs::rename(backup, destination);
             }
             Err(PontemeshError::Io(error.error))
         }

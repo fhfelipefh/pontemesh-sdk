@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use std::ptr;
 
 use pontemesh_sdk_core::{
-    p2p::P2pConfig, ErrorCode, PontemeshClientConfig, SyncObjectRequest, TransferSummary,
-    UpdateCheckRequest,
+    ErrorCode, PontemeshClientConfig, SyncObjectRequest, TransferSummary, UpdateCheckRequest,
 };
 
 pub struct PontemeshClient {
@@ -25,6 +24,8 @@ pub enum PontemeshStatus {
     PontemeshNoSourceAvailable = 5,
     PontemeshIoError = 6,
     PontemeshCancelled = 7,
+    PontemeshSuspended = 8,
+    PontemeshPathNotAllowed = 9,
     PontemeshInternalError = 255,
 }
 
@@ -95,11 +96,8 @@ pub unsafe extern "C" fn pontemesh_client_create(
         if origin_url.trim().is_empty() || application_token.trim().is_empty() {
             return PontemeshStatus::PontemeshInvalidArgument;
         }
-        let inner = match pontemesh_sdk_core::PontemeshClient::new(PontemeshClientConfig {
-            origin_url,
-            application_token,
-            p2p: P2pConfig::default(),
-        }) {
+        let config = PontemeshClientConfig::new(origin_url, application_token);
+        let inner = match pontemesh_sdk_core::PontemeshClient::new(config) {
             Ok(client) => client,
             Err(error) => return status_from_code(error.code()),
         };
@@ -293,6 +291,109 @@ pub unsafe extern "C" fn pontemesh_client_sync_object_with_summary_and_progress(
 /// # Safety
 ///
 /// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+pub unsafe extern "C" fn pontemesh_client_set_active(
+    client: *mut PontemeshClient,
+    active: i32,
+) -> PontemeshStatus {
+    ffi_boundary(|| {
+        let client = match client.as_mut() {
+            Some(client) => client,
+            None => return PontemeshStatus::PontemeshInvalidArgument,
+        };
+        match client.inner.set_active(active != 0) {
+            Ok(()) => {
+                client.last_error = None;
+                PontemeshStatus::PontemeshOk
+            }
+            Err(error) => set_error(client, &error.to_string(), status_from_code(error.code())),
+        }
+    })
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+/// `out_active` must be a valid writable pointer to an int32_t.
+pub unsafe extern "C" fn pontemesh_client_is_active(
+    client: *mut PontemeshClient,
+    out_active: *mut i32,
+) -> PontemeshStatus {
+    ffi_boundary(|| {
+        let client = match client.as_ref() {
+            Some(client) => client,
+            None => return PontemeshStatus::PontemeshInvalidArgument,
+        };
+        if out_active.is_null() {
+            return PontemeshStatus::PontemeshInvalidArgument;
+        }
+        *out_active = if client.inner.is_active() { 1 } else { 0 };
+        PontemeshStatus::PontemeshOk
+    })
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+pub unsafe extern "C" fn pontemesh_client_suspend(client: *mut PontemeshClient) -> PontemeshStatus {
+    pontemesh_client_set_active(client, 0)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+pub unsafe extern "C" fn pontemesh_client_resume(client: *mut PontemeshClient) -> PontemeshStatus {
+    pontemesh_client_set_active(client, 1)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+/// `path` must be a valid null-terminated UTF-8 C string.
+pub unsafe extern "C" fn pontemesh_client_add_allowed_directory(
+    client: *mut PontemeshClient,
+    path: *const c_char,
+) -> PontemeshStatus {
+    ffi_boundary(|| {
+        let client = match client.as_mut() {
+            Some(client) => client,
+            None => return PontemeshStatus::PontemeshInvalidArgument,
+        };
+        let path = match read_string(path) {
+            Ok(value) => value,
+            Err(status) => return set_error(client, "path is invalid", status),
+        };
+        client.inner.add_allowed_directory(PathBuf::from(path));
+        client.last_error = None;
+        PontemeshStatus::PontemeshOk
+    })
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
+pub unsafe extern "C" fn pontemesh_client_clear_allowed_directories(
+    client: *mut PontemeshClient,
+) -> PontemeshStatus {
+    ffi_boundary(|| {
+        let client = match client.as_mut() {
+            Some(client) => client,
+            None => return PontemeshStatus::PontemeshInvalidArgument,
+        };
+        client.inner.clear_allowed_directories();
+        client.last_error = None;
+        PontemeshStatus::PontemeshOk
+    })
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `client` must be a pointer returned by `pontemesh_client_create` and not yet freed.
 /// `buffer` must point to a writable memory region of at least `buffer_len` bytes.
 pub unsafe extern "C" fn pontemesh_client_get_last_error(
     client: *mut PontemeshClient,
@@ -479,6 +580,8 @@ fn status_from_code(code: ErrorCode) -> PontemeshStatus {
         }
         ErrorCode::IoError => PontemeshStatus::PontemeshIoError,
         ErrorCode::Cancelled => PontemeshStatus::PontemeshCancelled,
+        ErrorCode::Suspended => PontemeshStatus::PontemeshSuspended,
+        ErrorCode::PathNotAllowed => PontemeshStatus::PontemeshPathNotAllowed,
         ErrorCode::InternalError => PontemeshStatus::PontemeshInternalError,
     }
 }
@@ -561,5 +664,63 @@ mod tests {
         };
         assert_eq!(status, PontemeshStatus::PontemeshInvalidArgument);
         unsafe { pontemesh_software_update_free(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn c_client_suspension_and_allowed_directories_work() {
+        let origin_url = std::ffi::CString::new("https://origin.example.com").unwrap();
+        let token = std::ffi::CString::new("app-token").unwrap();
+        let mut client: *mut PontemeshClient = std::ptr::null_mut();
+
+        let status =
+            unsafe { pontemesh_client_create(origin_url.as_ptr(), token.as_ptr(), &mut client) };
+        assert_eq!(status, PontemeshStatus::PontemeshOk);
+        assert!(!client.is_null());
+
+        let mut is_active = 0;
+        unsafe {
+            assert_eq!(
+                pontemesh_client_is_active(client, &mut is_active),
+                PontemeshStatus::PontemeshOk
+            );
+            assert_eq!(is_active, 1);
+
+            // Suspend
+            assert_eq!(
+                pontemesh_client_suspend(client),
+                PontemeshStatus::PontemeshOk
+            );
+            assert_eq!(
+                pontemesh_client_is_active(client, &mut is_active),
+                PontemeshStatus::PontemeshOk
+            );
+            assert_eq!(is_active, 0);
+
+            // Resume
+            assert_eq!(
+                pontemesh_client_resume(client),
+                PontemeshStatus::PontemeshOk
+            );
+            assert_eq!(
+                pontemesh_client_is_active(client, &mut is_active),
+                PontemeshStatus::PontemeshOk
+            );
+            assert_eq!(is_active, 1);
+
+            // Add allowed directory
+            let allowed = std::ffi::CString::new("C:\\Games").unwrap();
+            assert_eq!(
+                pontemesh_client_add_allowed_directory(client, allowed.as_ptr()),
+                PontemeshStatus::PontemeshOk
+            );
+
+            // Clear allowed directories
+            assert_eq!(
+                pontemesh_client_clear_allowed_directories(client),
+                PontemeshStatus::PontemeshOk
+            );
+
+            pontemesh_client_free(client);
+        }
     }
 }
