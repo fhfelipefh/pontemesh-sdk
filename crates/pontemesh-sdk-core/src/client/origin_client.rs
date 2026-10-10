@@ -9,14 +9,35 @@ use crate::p2p::PeerAnnouncement;
 use crate::release::{SoftwareUpdateInfo, UpdateCheckRequest};
 
 use std::path::PathBuf;
+use std::time::Duration;
 
-#[derive(Debug, Clone, Default)]
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const DEFAULT_ORIGIN_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_FRAGMENT_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Clone)]
 pub struct PontemeshClientConfig {
     pub origin_url: String,
     pub application_token: String,
     pub p2p: crate::p2p::P2pConfig,
     pub suspended: bool,
     pub allowed_directories: Vec<PathBuf>,
+    pub connect_timeout: Duration,
+    pub request_timeout: Duration,
+}
+
+impl Default for PontemeshClientConfig {
+    fn default() -> Self {
+        Self {
+            origin_url: String::new(),
+            application_token: String::new(),
+            p2p: crate::p2p::P2pConfig::default(),
+            suspended: false,
+            allowed_directories: Vec::new(),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            request_timeout: DEFAULT_ORIGIN_TIMEOUT,
+        }
+    }
 }
 
 impl PontemeshClientConfig {
@@ -27,7 +48,15 @@ impl PontemeshClientConfig {
             p2p: crate::p2p::P2pConfig::default(),
             suspended: false,
             allowed_directories: Vec::new(),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            request_timeout: DEFAULT_ORIGIN_TIMEOUT,
         }
+    }
+
+    pub fn with_timeouts(mut self, connect_timeout: Duration, request_timeout: Duration) -> Self {
+        self.connect_timeout = connect_timeout;
+        self.request_timeout = request_timeout;
+        self
     }
 
     pub fn with_p2p(mut self, p2p: crate::p2p::P2pConfig) -> Self {
@@ -103,11 +132,23 @@ pub struct HttpOriginClient {
 
 impl HttpOriginClient {
     pub fn new(config: PontemeshClientConfig) -> Self {
+        let connect_timeout = if config.connect_timeout.is_zero() {
+            DEFAULT_CONNECT_TIMEOUT
+        } else {
+            config.connect_timeout
+        };
+        let request_timeout = if config.request_timeout.is_zero() {
+            DEFAULT_ORIGIN_TIMEOUT
+        } else {
+            config.request_timeout
+        };
         Self {
             origin_url: config.origin_url.trim_end_matches('/').to_string(),
             application_token: config.application_token,
             http: reqwest::blocking::Client::builder()
                 .no_proxy()
+                .connect_timeout(connect_timeout)
+                .timeout(request_timeout)
                 .build()
                 .expect("build HTTP client"),
             manifest_cache: Mutex::new(HashMap::new()),

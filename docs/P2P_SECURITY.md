@@ -26,6 +26,8 @@ P2P seguro de produção: pronto
 | Peer sends invalid response | Receiver validates metadata, size, nonce, and SHA-256 before persisting. |
 | Peer attempts path traversal | P2P protocol carries no local file path. |
 | Peer attempts DoS with slow or stalled requests | Client request-response timeout and fallback prevent permanent blocking. |
+| Peer attempts DoS with request flood | P2P transport enforces per-peer sliding window request rate limiting (`64 req/s`). |
+| Peer attempts memory exhaustion | Local fragment store bounds maximum cached fragments (`10,000` max). |
 | MITM between peers | libp2p Noise authenticates the remote `PeerId`; an attacker cannot satisfy an authorized `PeerId` without its identity key. |
 | Replay of old message | Request nonce must be echoed by the response; mismatched nonce is rejected. |
 | Revocation/expiration during download | Expired source/package is rejected; stronger live revocation requires Origin revalidation or peer transfer token support. |

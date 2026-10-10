@@ -488,3 +488,22 @@ fn release_manifest_strictly_rejects_backdoor_paths_and_null_bytes() {
     };
     assert!(null_byte_manifest.validate().is_err());
 }
+
+#[test]
+fn config_supports_custom_network_timeouts() {
+    use std::time::Duration;
+    let config = PontemeshClientConfig::new("https://origin.example.com", "token")
+        .with_timeouts(Duration::from_secs(5), Duration::from_secs(15));
+
+    assert_eq!(config.connect_timeout, Duration::from_secs(5));
+    assert_eq!(config.request_timeout, Duration::from_secs(15));
+}
+
+#[test]
+fn libp2p_transport_security_markers_are_verified() {
+    use pontemesh_sdk_core::p2p::Libp2pTransport;
+    let server = Libp2pTransport::start(&["/ip4/127.0.0.1/tcp/0".to_string()], &[])
+        .expect("start libp2p server");
+    assert_eq!(server.secure_channel(), "Noise");
+    assert_eq!(server.multiplexer(), "Yamux");
+}

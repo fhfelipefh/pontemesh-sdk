@@ -71,15 +71,42 @@ struct SharedFragment {
     package_expires_at: String,
 }
 
+const MAX_STORED_FRAGMENTS: usize = 10_000;
+const MAX_REQUESTS_PER_PEER_PER_WINDOW: u32 = 64;
+const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
+
 #[derive(Default)]
 struct PeerStore {
     fragments: HashMap<String, SharedFragment>,
     available: BTreeSet<usize>,
+    peer_request_counters: HashMap<PeerId, (u32, std::time::Instant)>,
 }
 
 impl PeerStore {
     fn key(package_id: &str, manifest_id: &str, fragment_index: usize) -> String {
         format!("{package_id}:{manifest_id}:{fragment_index}")
+    }
+
+    fn check_and_increment_rate_limit(&mut self, peer_id: PeerId) -> bool {
+        let now = std::time::Instant::now();
+        if self.peer_request_counters.len() > 1024 {
+            self.peer_request_counters
+                .retain(|_, (_, ts)| now.duration_since(*ts) <= RATE_LIMIT_WINDOW);
+        }
+
+        let entry = self
+            .peer_request_counters
+            .entry(peer_id)
+            .or_insert((0, now));
+        if now.duration_since(entry.1) > RATE_LIMIT_WINDOW {
+            *entry = (1, now);
+            true
+        } else if entry.0 < MAX_REQUESTS_PER_PEER_PER_WINDOW {
+            entry.0 += 1;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -449,15 +476,17 @@ async fn run_swarm(
             command = command_rx.recv() => {
                 match command {
                 Some(WorkerCommand::AddFragment { shared, reply }) => {
-                    store.available.insert(shared.fragment.index);
-                    store.fragments.insert(
-                        PeerStore::key(
-                            &shared.package_id,
-                            &shared.manifest_id,
-                            shared.fragment.index,
-                        ),
-                        shared,
-                    );
+                    if store.fragments.len() < MAX_STORED_FRAGMENTS {
+                        store.available.insert(shared.fragment.index);
+                        store.fragments.insert(
+                            PeerStore::key(
+                                &shared.package_id,
+                                &shared.manifest_id,
+                                shared.fragment.index,
+                            ),
+                            shared,
+                        );
+                    }
                     let _ = reply.send(Ok(store.available.iter().copied().collect()));
                 }
                 Some(WorkerCommand::Download {
@@ -540,7 +569,7 @@ fn handle_request_response_event(
             RequestResponseMessage::Request {
                 request, channel, ..
             } => {
-                send_fragment_response(request_response, store, channel, request);
+                send_fragment_response(request_response, store, channel, request, peer);
             }
             RequestResponseMessage::Response {
                 request_id,
@@ -573,7 +602,11 @@ fn send_fragment_response(
     store: &mut PeerStore,
     channel: ResponseChannel<Libp2pFragmentResponse>,
     request: Libp2pFragmentRequest,
+    peer: PeerId,
 ) {
+    if !store.check_and_increment_rate_limit(peer) {
+        return;
+    }
     if let Ok(response) = handle_fragment_request(&request, store) {
         let _ = request_response.send_response(channel, response);
     }

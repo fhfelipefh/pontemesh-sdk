@@ -58,10 +58,16 @@ impl PontemeshClient {
         };
         let suspended = Arc::new(AtomicBool::new(config.suspended));
         let allowed_directories = Arc::new(RwLock::new(config.allowed_directories.clone()));
+        let source_client = HttpSourceClient::with_timeouts(
+            config.connect_timeout,
+            config
+                .request_timeout
+                .max(origin_client::DEFAULT_FRAGMENT_TIMEOUT),
+        );
         Ok(Self {
             config: Some(config.clone()),
             origin: Box::new(HttpOriginClient::new(config)),
-            source: Box::new(HttpSourceClient::new()),
+            source: Box::new(source_client),
             peer: Arc::new(RwLock::new(peer)),
             suspended,
             allowed_directories,

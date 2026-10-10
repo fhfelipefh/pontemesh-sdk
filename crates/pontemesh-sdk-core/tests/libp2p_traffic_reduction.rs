@@ -66,7 +66,6 @@ impl SourceClient for OriginSource {
 }
 
 #[test]
-#[ignore]
 fn p2p_reduces_origin_traffic_against_origin_only_baseline() {
     let object = b"traffic-reduction-object-with-several-fragments".to_vec();
     let manifest = manifest(&object, 7);

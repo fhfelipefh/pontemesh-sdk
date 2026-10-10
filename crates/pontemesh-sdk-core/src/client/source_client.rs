@@ -14,15 +14,34 @@ pub trait SourceClient: Send + Sync {
     ) -> Result<Vec<u8>, PontemeshError>;
 }
 
+use crate::client::origin_client::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_FRAGMENT_TIMEOUT};
+use std::time::Duration;
+
 pub struct HttpSourceClient {
     http: reqwest::blocking::Client,
 }
 
 impl HttpSourceClient {
     pub fn new() -> Self {
+        Self::with_timeouts(DEFAULT_CONNECT_TIMEOUT, DEFAULT_FRAGMENT_TIMEOUT)
+    }
+
+    pub fn with_timeouts(connect_timeout: Duration, request_timeout: Duration) -> Self {
+        let connect_timeout = if connect_timeout.is_zero() {
+            DEFAULT_CONNECT_TIMEOUT
+        } else {
+            connect_timeout
+        };
+        let request_timeout = if request_timeout.is_zero() {
+            DEFAULT_FRAGMENT_TIMEOUT
+        } else {
+            request_timeout
+        };
         Self {
             http: reqwest::blocking::Client::builder()
                 .no_proxy()
+                .connect_timeout(connect_timeout)
+                .timeout(request_timeout)
                 .build()
                 .expect("build HTTP client"),
         }

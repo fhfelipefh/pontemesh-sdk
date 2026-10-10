@@ -78,7 +78,6 @@ impl SourceClient for MeshSource {
 }
 
 #[test]
-#[ignore]
 fn multi_sdk_mesh_downloads_from_peers_and_completes_objects() {
     let object = b"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec();
     let manifest = manifest(&object, 8);

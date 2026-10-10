@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.1
+
+### Security Hardening & Improvements
+
+- **Network Timeouts & Slowloris Mitigation**:
+  - Configured explicit connection (10s) and request (30s Origin, 60s fragment) timeouts on all HTTP client instances (`HttpOriginClient` and `HttpSourceClient`).
+  - Added `with_timeouts(connect_timeout, request_timeout)` to `PontemeshClientConfig` for granular developer control.
+  - Mitigates Denial-of-Service and hanging threads caused by stalled or unresponsive Origin / replica HTTP connections.
+- **Libp2p P2P Rate Limiting & Resource Protection**:
+  - Implemented per-peer sliding window request rate limiting (`MAX_REQUESTS_PER_PEER_PER_WINDOW = 64/s`) to prevent malicious peer request flooding and bandwidth exhaustion.
+  - Implemented bounded fragment cache limit (`MAX_STORED_FRAGMENTS = 10_000`) in local P2P store to protect against memory exhaustion.
+- **Automated Security Verification**:
+  - Integrated all malicious peer attack tests (`libp2p_malicious_peer.rs`, `libp2p_mesh_simulation.rs`, `libp2p_traffic_reduction.rs`) into default test suite (`cargo test`) by removing `#[ignore]` flags.
+  - Ensures continuous automated verification of SHA-256 hash corruption rejection, wrong peer ID rejection, replayed nonce prevention, and oversized payload rejections in CI and release pipelines.
+
 ## 0.3.0
 
 ### Added

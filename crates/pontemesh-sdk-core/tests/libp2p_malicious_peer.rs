@@ -78,7 +78,6 @@ impl SourceClient for OriginSource {
 }
 
 #[test]
-#[ignore]
 fn malicious_peer_hash_mismatch_is_rejected_and_origin_fallback_completes() {
     run_malicious_case(MaliciousMode::WrongHash, |summary| {
         assert!(summary.peer_hash_failures > 0);
@@ -87,7 +86,6 @@ fn malicious_peer_hash_mismatch_is_rejected_and_origin_fallback_completes() {
 }
 
 #[test]
-#[ignore]
 fn malicious_peer_wrong_index_is_rejected_and_origin_fallback_completes() {
     run_malicious_case(MaliciousMode::WrongIndex, |summary| {
         assert!(summary.peer_failures > 0);
@@ -96,7 +94,6 @@ fn malicious_peer_wrong_index_is_rejected_and_origin_fallback_completes() {
 }
 
 #[test]
-#[ignore]
 fn malicious_peer_oversized_frame_is_rejected_and_origin_fallback_completes() {
     run_malicious_case(MaliciousMode::Oversized, |summary| {
         assert!(summary.peer_failures > 0);
@@ -105,7 +102,6 @@ fn malicious_peer_oversized_frame_is_rejected_and_origin_fallback_completes() {
 }
 
 #[test]
-#[ignore]
 fn malicious_peer_identity_mismatch_is_rejected_and_origin_fallback_completes() {
     run_malicious_case(MaliciousMode::WrongPeerId, |summary| {
         assert!(summary.peer_failures > 0);
@@ -114,7 +110,6 @@ fn malicious_peer_identity_mismatch_is_rejected_and_origin_fallback_completes() 
 }
 
 #[test]
-#[ignore]
 fn replayed_nonce_is_rejected_and_origin_fallback_completes() {
     run_malicious_case(MaliciousMode::WrongNonce, |summary| {
         assert!(summary.peer_failures > 0);
@@ -123,7 +118,6 @@ fn replayed_nonce_is_rejected_and_origin_fallback_completes() {
 }
 
 #[test]
-#[ignore]
 fn expired_peer_is_ignored_and_origin_completes() {
     let bytes = b"secure-fragment".to_vec();
     let manifest = manifest(&bytes);
@@ -162,7 +156,6 @@ fn expired_peer_is_ignored_and_origin_completes() {
 }
 
 #[test]
-#[ignore]
 fn peer_request_never_contains_path_traversal_or_tokens() {
     let captured = Arc::new(Mutex::new(String::new()));
     let (endpoint, peer_id) = malicious_peer(MaliciousMode::WrongHash, captured.clone());
