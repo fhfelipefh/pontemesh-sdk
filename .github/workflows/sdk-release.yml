@@ -63,6 +63,11 @@ jobs:
             archive: tar
             dynamic_library: libpontemesh_sdk.so
             static_library: libpontemesh_sdk.a
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            archive: tar
+            dynamic_library: libpontemesh_sdk.so
+            static_library: libpontemesh_sdk.a
           - name: macos-x64
             os: macos-15-intel
             archive: tar
@@ -198,6 +203,7 @@ jobs:
           manifest_path = pathlib.Path(sys.argv[2])
           expected = {
               f"pontemesh-sdk-v{version}-linux-x64.tar.gz",
+              f"pontemesh-sdk-v{version}-linux-arm64.tar.gz",
               f"pontemesh-sdk-v{version}-macos-x64.tar.gz",
               f"pontemesh-sdk-v{version}-macos-arm64.tar.gz",
               f"pontemesh-sdk-v{version}-windows-x64.zip",
