@@ -4,6 +4,10 @@
 
 ### Security Hardening & Improvements
 
+- **Security Dependency Upgrades**:
+  - Upgraded `rustls` to `0.23.46` (mitigating GHSA-2mjx-qc3c-rqvc / RUSTSEC-2026-0285).
+  - Upgraded `libp2p` to `0.57.1`, updating `libp2p-yamux` to `0.48.0` using `yamux 0.14.1` (mitigating CVE-2026-32314 / GHSA-vxx9-2994-q338) and `libp2p-dns` with `hickory-resolver` / `hickory-proto` to `0.26.3` (mitigating GHSA-5j98-2g5x-46v6 and GHSA-3v94-mw7p-v465).
+  - Upgraded `tokio` to `1.54.1`.
 - **Network Timeouts & Slowloris Mitigation**:
   - Configured explicit connection (10s) and request (30s Origin, 60s fragment) timeouts on all HTTP client instances (`HttpOriginClient` and `HttpSourceClient`).
   - Added `with_timeouts(connect_timeout, request_timeout)` to `PontemeshClientConfig` for granular developer control.
